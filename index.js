@@ -545,11 +545,8 @@ const exportCardImage = async (cardHtml) => {
 
 const DIALOG_STYLE_ID = 'mcsg-dialog-style'
 
-const ensureDialogStyles = () => {
-  if (document.getElementById(DIALOG_STYLE_ID)) return
-  const style = document.createElement('style')
-  style.id = DIALOG_STYLE_ID
-  style.textContent = `
+// 弹窗样式文本单列成常量：供 ensureDialogStyles 每次打开时覆盖比对（见该函数注释）
+const DIALOG_STYLE_TEXT = `
 .mcsg-ui-overlay{position:fixed;inset:0;z-index:2147483000;background:rgba(8,9,14,.52);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center}
 .mcsg-ui-dialog{width:880px;max-width:calc(100vw - 48px);max-height:calc(100vh - 48px);border-radius:22px;background:var(--color-bg-main,#1b1c22);box-shadow:0 40px 120px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden}
 .mcsg-ui-header{display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid rgba(128,128,140,.14)}
@@ -557,26 +554,43 @@ const ensureDialogStyles = () => {
 .mcsg-ui-sub{flex:1;min-width:0;color:var(--color-text-secondary,#9a9ca8);font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .mcsg-ui-close{flex:0 0 auto;width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:var(--color-text-secondary,#9a9ca8);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .mcsg-ui-close:hover{background:rgba(128,128,140,.16);color:var(--color-text-main,#ececf2)}
-.mcsg-ui-body{display:flex;gap:22px;padding:22px 24px;overflow:auto}
+.mcsg-ui-body{flex:1 1 auto;min-height:0;display:flex;gap:22px;padding:22px 24px;overflow:auto}
 .mcsg-ui-preview{flex:0 0 auto;width:452px}
 .mcsg-ui-preview-clip{width:452px;border-radius:16px;overflow:hidden;background:#101116;box-shadow:0 14px 40px rgba(0,0,0,.32)}
 .mcsg-ui-preview-card{transform-origin:top left}
 .mcsg-ui-preview-hint{margin-top:10px;text-align:center;color:var(--color-text-secondary,#9a9ca8);font-size:12px}
-.mcsg-ui-side{flex:1;min-width:0;display:flex;flex-direction:column}
-.mcsg-ui-grid{display:grid;grid-template-columns:repeat(3,100px);gap:12px;justify-content:start}
+.mcsg-ui-side{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+/* padding-bottom 给悬浮按钮让出空间：网格滚到底时最后一行也不会压在按钮下面 */
+.mcsg-ui-grid{flex:1 1 auto;min-height:0;overflow:auto;align-content:start;grid-auto-rows:max-content;padding-bottom:58px;display:grid;grid-template-columns:repeat(3,100px);gap:12px;justify-content:start}
 .mcsg-ui-style{position:relative;border:2px solid transparent;border-radius:12px;overflow:hidden;cursor:pointer;background:#101116;padding:0;outline:none}
 .mcsg-ui-style.is-active{border-color:#4a8cff;box-shadow:0 0 0 3px rgba(74,140,255,.22)}
 .mcsg-ui-style-clip{width:100px;position:relative}
 .mcsg-ui-style-card{position:absolute;left:0;top:0;transform-origin:top left;pointer-events:none}
 .mcsg-ui-style-name{position:absolute;left:0;right:0;bottom:0;padding:14px 0 5px;text-align:center;color:#fff;font-size:12px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.72))}
-.mcsg-ui-actions{margin-top:auto;padding-top:18px;display:flex;flex-direction:column;gap:10px}
-.mcsg-ui-btn{height:42px;border-radius:11px;border:1px solid rgba(128,128,140,.3);background:transparent;color:var(--color-text-main,#ececf2);font-size:14px;cursor:pointer;transition:background .15s}
-.mcsg-ui-btn:hover{background:rgba(128,128,140,.14)}
-.mcsg-ui-btn.is-primary{border:0;background:#4a8cff;color:#fff;font-weight:600}
-.mcsg-ui-btn.is-primary:hover{background:#3b7def}
+/* 操作按钮脱离内容流悬浮在侧栏底部（宽度同侧栏，左右各半）：模板网格在它下层滚动，按钮位置始终不变 */
+.mcsg-ui-actions{position:absolute;left:0;right:0;bottom:0;z-index:1;display:flex;gap:12px}
+.mcsg-ui-actions .mcsg-ui-btn{flex:1 1 0;min-width:0;box-sizing:border-box}
+/* 次要按钮用不透明实底（悬浮在缩略图之上，透明底会透出卡片导致文字难读）；
+   底色由主题背景色向文字色混少量比例，深浅主题下都保持与背景有区分度的中性色 */
+.mcsg-ui-btn{height:42px;border-radius:11px;border:1px solid rgba(128,128,140,.34);background:var(--color-bg-main,#1b1c22);background:color-mix(in srgb, var(--color-bg-main,#1b1c22) 84%, var(--color-text-main,#ececf2));color:var(--color-text-main,#ececf2);font-size:14px;cursor:pointer;transition:background .15s}
+.mcsg-ui-btn:hover{background:color-mix(in srgb, var(--color-bg-main,#1b1c22) 72%, var(--color-text-main,#ececf2))}
+/* 主按钮跟随主程序主题色：与主程序内置按钮同款变量组合（background=primary + color=on-primary） */
+.mcsg-ui-btn.is-primary{border-color:transparent;background:var(--color-primary,#4a8cff);color:var(--color-on-primary,#fff);font-weight:600}
+.mcsg-ui-btn.is-primary:hover{background:var(--color-primary-hover,#3b7def)}
+.mcsg-ui-btn.is-primary:active{background:var(--color-primary-pressed,var(--color-primary-hover,#3b7def))}
 .mcsg-ui-btn:disabled{opacity:.55;cursor:not-allowed}
 `
-  document.head.appendChild(style)
+
+const ensureDialogStyles = () => {
+  let style = document.getElementById(DIALOG_STYLE_ID)
+  if (!style) {
+    style = document.createElement('style')
+    style.id = DIALOG_STYLE_ID
+    document.head.appendChild(style)
+  }
+  // 始终重写内容：style 元素一旦注入就留在文档里，插件热更新后若沿用旧的样式表，
+  // 新版本 CSS 永远不会生效（曾导致新版 JS 配旧版 CSS 的错乱布局）
+  if (style.textContent !== DIALOG_STYLE_TEXT) style.textContent = DIALOG_STYLE_TEXT
 }
 
 const createShareDialog = (ctx, shareContext, closeDialog) => {
@@ -588,7 +602,8 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
     name: 'MusicCardShareDialog',
     setup() {
       const currentId = ref(templates[0]?.id || '')
-      const busy = ref('')
+      // 必须用布尔：Vue 对布尔属性把空字符串也判为真，'' 会让按钮一开始就 disabled
+      const busy = ref(false)
       const previewRef = ref(null)
       let disposed = false
 
@@ -611,11 +626,20 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
         if (!holder) return
         holder.innerHTML = cardHtmlOf(currentId.value)
         const { width, height } = measureCard(holder)
-        const scale = Math.min(452 / width, 596 / height)
+        const clip = holder.parentElement
+        // 可用高度取内容区实测值（扣除内边距与下方提示文案），预览不溢出，内容区就不会整体滚动、按钮位置也就固定
+        const bodyBox = clip?.closest('.mcsg-ui-body')
+        const hint = clip?.nextElementSibling
+        const bodyStyle = bodyBox ? getComputedStyle(bodyBox) : null
+        const verticalPadding = bodyStyle
+          ? (parseFloat(bodyStyle.paddingTop) || 0) + (parseFloat(bodyStyle.paddingBottom) || 0)
+          : 44
+        const availableHeight = Math.max(200, (bodyBox?.clientHeight || 0) - verticalPadding - (hint?.offsetHeight || 0))
+        const availableWidth = clip?.parentElement?.offsetWidth || 452
+        const scale = Math.min(availableWidth / width, availableHeight / height)
         holder.style.width = `${width}px`
         holder.style.height = `${height}px`
         holder.style.transform = `scale(${scale})`
-        const clip = holder.parentElement
         clip.style.width = `${Math.round(width * scale)}px`
         clip.style.height = `${Math.round(height * scale)}px`
       }
@@ -698,37 +722,38 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
                 ]),
                 h('div', { class: 'mcsg-ui-preview-hint' }, '二维码可被「长按识别」打开分享页'),
               ]),
-              h('div', { class: 'mcsg-ui-side' }, [
-                h('div', { class: 'mcsg-ui-grid' },
-                  templates.map((tpl) =>
-                    h('button', {
-                      key: tpl.id,
-                      class: ['mcsg-ui-style', currentId.value === tpl.id ? 'is-active' : ''],
-                      'data-mcsg-thumb': tpl.id,
-                      onClick: () => selectStyle(tpl.id),
-                    }, [
-                      h('div', { class: 'mcsg-ui-style-clip' }, [
-                        h('div', { class: 'mcsg-ui-style-card' }),
+                h('div', { class: 'mcsg-ui-side' }, [
+                  h('div', { class: 'mcsg-ui-grid' },
+                    templates.map((tpl) =>
+                      h('button', {
+                        key: tpl.id,
+                        class: ['mcsg-ui-style', currentId.value === tpl.id ? 'is-active' : ''],
+                        'data-mcsg-thumb': tpl.id,
+                        onClick: () => selectStyle(tpl.id),
+                      }, [
+                        h('div', { class: 'mcsg-ui-style-clip' }, [
+                          h('div', { class: 'mcsg-ui-style-card' }),
+                        ]),
+                        h('div', { class: 'mcsg-ui-style-name' }, tpl.name),
                       ]),
-                      h('div', { class: 'mcsg-ui-style-name' }, tpl.name),
-                    ]),
+                    ),
                   ),
-                ),
-                h('div', { class: 'mcsg-ui-actions' }, [
-                  h('button', {
-                    class: 'mcsg-ui-btn is-primary',
-                    disabled: busy.value,
-                    onClick: () => exportImage(),
-                  }, busy.value ? '正在复制…' : '复制图片'),
-                  h('button', {
-                    class: 'mcsg-ui-btn',
-                    disabled: busy.value,
-                    onClick: copyLink,
-                  }, '复制链接'),
+                  // 按钮悬浮在侧栏底部、浮于模板网格之上：左右各占一半，宽度即侧栏宽度
+                  h('div', { class: 'mcsg-ui-actions' }, [
+                    h('button', {
+                      class: 'mcsg-ui-btn is-primary',
+                      disabled: busy.value,
+                      onClick: () => exportImage(),
+                    }, busy.value ? '正在复制…' : '复制图片'),
+                    h('button', {
+                      class: 'mcsg-ui-btn',
+                      disabled: busy.value,
+                      onClick: copyLink,
+                    }, '复制链接'),
+                  ]),
                 ]),
               ]),
             ]),
-          ]),
         ])
     },
   })
@@ -761,6 +786,9 @@ export default async function activate(ctx) {
     }
     closeDialog()
     ensureDialogStyles()
+    // 清掉上一次会话残留的弹窗 DOM：插件热更新后旧实例已失联、新实例无法接管，
+    // 不清理会在界面上叠出两套弹窗（旧按钮与旧布局仍在）
+    document.querySelectorAll('.mcsg-ui-overlay').forEach((node) => node.remove())
     dialogDisposer = ctx.ui.teleport(createShareDialog(ctx, shareContext, closeDialog))
   }
 
