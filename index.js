@@ -489,56 +489,195 @@ const discoverTemplates = async (ctx) => {
   return templates
 }
 
-// ── 截图导出（stage 模式：短暂可见的高清离屏卡片 → capturePage） ──
+// ── 截图导出 ──
+//
+// 首选「插件内栅格化」：卡片 HTML → foreignObject SVG → canvas → PNG 写入剪贴板。
+// 全程在渲染进程完成，尺寸由自己指定，因此分辨率与窗口大小、屏幕 DPI 无关；
+// 代价是 SVG 图像里的 backdrop-filter 不生效（模板中的毛玻璃会退化为半透明底）。
+// 该路失败时回退到「截预览区已渲染的卡片」——保真但分辨率受视口与屏幕 DPI 限制。
 
-const buildCaptureStage = (cardHtml) => {
-  const stage = document.createElement('div')
-  stage.setAttribute('data-mcsg-stage', '1')
-  // 尺寸由卡片模板根元素（.mcsg-card）自身决定，stage 只负责定位与显隐
-  stage.style.cssText = [
-    'position:fixed',
-    'left:0',
-    'top:0',
-    'z-index:2147483647',
-    'visibility:hidden',
-    'pointer-events:none',
-  ].join(';')
-  stage.innerHTML = cardHtml
-  return stage
+// 导出目标像素高度：按卡片逻辑尺寸等比放大到该高度
+const EXPORT_TARGET_HEIGHT = 2048
+// 放大倍数上限，避免超大画布占满内存
+const EXPORT_MAX_RATIO = 3
+
+/** ArrayBuffer → base64（分块拼接，避免 apply 参数过长） */
+const arrayBufferToBase64 = (buffer) => {
+  const bytes = new Uint8Array(buffer)
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
 }
 
-const captureStageRect = (stage) => {
-  const card = stage.querySelector('.mcsg-card')
-  const rect = (card || stage).getBoundingClientRect()
-  return {
-    x: Math.max(0, Math.floor(rect.left)),
-    y: Math.max(0, Math.floor(rect.top)),
-    width: Math.ceil(rect.width),
-    height: Math.ceil(rect.height),
+/**
+ * 抓取远程资源为 dataURL。
+ * 主窗口 webSecurity 关闭，ctx.net.fetch 不受 CORS 限制；
+ * 酷狗封面有防盗链，必须不带 referrer（与模板里 img 的 referrerpolicy 一致）。
+ */
+const fetchAsDataUrl = async (ctx, url) => {
+  const fetchImpl = ctx.net?.fetch || (typeof fetch === 'function' ? fetch.bind(window) : null)
+  if (!fetchImpl) return ''
+  try {
+    const response = await fetchImpl(url, { referrerPolicy: 'no-referrer' })
+    if (!response?.ok) return ''
+    const buffer = await response.arrayBuffer()
+    if (!buffer || buffer.byteLength === 0) return ''
+    const mime = String(response.headers?.get?.('content-type') || '').split(';')[0].trim()
+    return `data:${mime.startsWith('image/') ? mime : 'image/jpeg'};base64,${arrayBufferToBase64(buffer)}`
+  } catch (error) {
+    console.warn('[music-card-share] 图片内联失败：', url, error)
+    return ''
   }
 }
 
 /**
- * 导出当前卡片到剪贴板（主进程 capturePage → clipboard.writeImage）
- * 短暂显示离屏 stage 后截图，History.vue 听歌统计分享同款节奏
+ * 把卡片 HTML 里的远程图片（img 的 src 与样式里的 url()）内联成 dataURL，
+ * 使栅格化文档完全自包含 —— SVG 图像不会加载外部资源。
  */
-const exportCardImage = async (cardHtml) => {
+const inlineRemoteImages = async (ctx, html) => {
+  let doc
+  try {
+    doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  } catch {
+    return html
+  }
+  const body = doc?.body
+  if (!body) return html
+
+  const isRemote = (value) => /^(?:https?:)?\/\//i.test(String(value || ''))
+  const targets = new Set()
+  const collectFromStyleText = (text) => {
+    if (!text) return
+    const re = /url\(\s*['"]?((?:https?:)?\/\/[^'")]+)/gi
+    let match = re.exec(text)
+    while (match) {
+      targets.add(match[1])
+      match = re.exec(text)
+    }
+  }
+  body.querySelectorAll('img[src]').forEach((el) => {
+    const src = el.getAttribute('src')
+    if (isRemote(src)) targets.add(src)
+  })
+  body.querySelectorAll('[style]').forEach((el) => collectFromStyleText(el.getAttribute('style')))
+  body.querySelectorAll('style').forEach((el) => collectFromStyleText(el.textContent))
+  if (targets.size === 0) return html
+
+  const resolved = new Map()
+  await Promise.all([...targets].map(async (url) => {
+    const dataUrl = await fetchAsDataUrl(ctx, url)
+    if (dataUrl) resolved.set(url, dataUrl)
+  }))
+  if (resolved.size === 0) return html
+
+  const replaceUrls = (text) => {
+    if (!text) return text
+    let result = text
+    resolved.forEach((dataUrl, url) => {
+      result = result.split(url).join(dataUrl)
+    })
+    return result
+  }
+  body.querySelectorAll('img[src]').forEach((el) => {
+    const src = el.getAttribute('src')
+    if (src && resolved.has(src)) el.setAttribute('src', resolved.get(src))
+  })
+  body.querySelectorAll('[style]').forEach((el) => {
+    el.setAttribute('style', replaceUrls(el.getAttribute('style')))
+  })
+  body.querySelectorAll('style').forEach((el) => {
+    el.textContent = replaceUrls(el.textContent)
+  })
+  return body.innerHTML
+}
+
+/**
+ * 卡片 HTML → PNG Blob（foreignObject 栅格化）。
+ * viewBox 用卡片逻辑尺寸、SVG 输出尺寸用放大后的像素，等价于按更高像素密度重新渲染。
+ */
+const rasterizeCardToPng = async (ctx, cardHtml, cardWidth, cardHeight) => {
+  const ratio = Math.min(EXPORT_MAX_RATIO, Math.max(1, EXPORT_TARGET_HEIGHT / cardHeight))
+  const pixelWidth = Math.max(1, Math.round(cardWidth * ratio))
+  const pixelHeight = Math.max(1, Math.round(cardHeight * ratio))
+
+  const html = await inlineRemoteImages(ctx, cardHtml)
+  const doc = new DOMParser().parseFromString(
+    `<!DOCTYPE html><html><head><meta charset="utf-8">`
+      + `<style>html,body{margin:0;padding:0;background:transparent}</style>`
+      + `</head><body>${html}</body></html>`,
+    'text/html',
+  )
+  const xml = new XMLSerializer().serializeToString(doc.documentElement)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}" `
+    + `viewBox="0 0 ${cardWidth} ${cardHeight}">`
+    + `<foreignObject x="0" y="0" width="${cardWidth}" height="${cardHeight}">${xml}</foreignObject></svg>`
+
+  const image = await loadImageFromUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
+  const canvas = document.createElement('canvas')
+  canvas.width = pixelWidth
+  canvas.height = pixelHeight
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.drawImage(image, 0, 0, pixelWidth, pixelHeight)
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) return null
+  return { blob, width: pixelWidth, height: pixelHeight }
+}
+
+/**
+ * 导出当前卡片到剪贴板，返回实际导出的像素尺寸。
+ * 先尝试插件内高清栅格化（分辨率与窗口、屏幕无关）；
+ * 失败或宿主不支持剪贴板写图时，回退到截取预览区已渲染的卡片（保真，但受屏幕分辨率限制）。
+ */
+const exportCardImage = async (ctx, cardRoot, cardHtml) => {
+  const card = cardRoot?.querySelector?.('.mcsg-card') || cardRoot
+  if (!card) throw new Error('未找到可截图的卡片')
+
+  await waitForImages(card)
+
+  // 1) 插件内栅格化：offsetWidth/Height 是卡片的逻辑尺寸（不受预览缩放影响）
+  const cardWidth = card.offsetWidth || 0
+  const cardHeight = card.offsetHeight || 0
+  if (cardHtml && cardWidth > 0 && cardHeight > 0 && navigator.clipboard?.write) {
+    try {
+      const raster = await rasterizeCardToPng(ctx, cardHtml, cardWidth, cardHeight)
+      if (raster) {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': raster.blob })])
+        return { width: raster.width, height: raster.height }
+      }
+    } catch (error) {
+      console.warn('[music-card-share] 高清栅格化失败，回退为预览截图：', error)
+    }
+  }
+
+  // 2) 回退：截预览区已渲染的卡片（所见即所得，分辨率取决于视口与屏幕 DPI）
   const capture = window.electron?.share?.captureRectToClipboard
   if (!capture) throw new Error('当前客户端不支持截图复制')
 
-  const stage = buildCaptureStage(cardHtml)
-  document.body.appendChild(stage)
-  try {
-    await waitForImages(stage)
-    // 先隐藏加载图片，再短暂显示两帧等待合成器绘制
-    stage.style.visibility = 'visible'
+  const before = card.getBoundingClientRect()
+  if (before.top < 0 || before.left < 0 || before.bottom > window.innerHeight || before.right > window.innerWidth) {
+    card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     await nextPaint()
-    const rect = captureStageRect(stage)
-    const ok = await capture(rect)
-    if (!ok) throw new Error('复制分享图片失败')
-  } finally {
-    stage.remove()
   }
+
+  const rect = card.getBoundingClientRect()
+  const width = Math.ceil(rect.width)
+  const height = Math.ceil(rect.height)
+  if (width <= 0 || height <= 0) throw new Error('卡片尚未渲染完成，请稍后重试')
+  if (height > window.innerHeight || width > window.innerWidth) {
+    throw new Error('窗口太小，无法完整截取卡片，请放大窗口后重试')
+  }
+  const ok = await capture({
+    x: Math.max(0, Math.floor(rect.left)),
+    y: Math.max(0, Math.floor(rect.top)),
+    width,
+    height,
+  })
+  if (!ok) throw new Error('复制分享图片失败')
+  return { width, height }
 }
 
 // ── 分享弹窗 ──
@@ -681,8 +820,9 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
         if (busy.value) return
         busy.value = true
         try {
-          await exportCardImage(cardHtmlOf(currentId.value))
-          ctx.toast.success('分享图片已复制，去粘贴吧')
+          // 传入当前模板的卡片 HTML：高清路径用它自行栅格化，失败时回退截预览区
+          const size = await exportCardImage(ctx, previewRef.value, cardHtmlOf(currentId.value))
+          ctx.toast.success(size ? `分享图片已复制（${size.width}×${size.height}），去粘贴吧` : '分享图片已复制，去粘贴吧')
         } catch (error) {
           ctx.toast.warning(error instanceof Error ? error.message : '复制分享图片失败')
         } finally {
