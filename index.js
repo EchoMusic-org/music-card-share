@@ -67,7 +67,7 @@ const buildQrSvg = (url) => {
   const qrcode = window.qrcode
   if (!qrcode || !url) return ''
   try {
-    const qr = qrcode(0, 'M')
+    const qr = qrcode(0, 'L')
     qr.addData(url)
     qr.make()
     return qr
