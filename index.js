@@ -455,7 +455,7 @@ const discoverTemplates = async (ctx) => {
     console.warn('[music-card-share] 模板目录扫描异常', error)
   }
 
-  // 以目录下的 index.js 推断模板目录（listFiles 只返回文件不返回目录）
+  // 以目录下的 index.js 推断模板目录
   const templateDirs = new Set()
   for (const entry of entries) {
     const relative = String(entry?.relativePath || '').replace(/\\/g, '/')
@@ -710,7 +710,6 @@ const DIALOG_STYLE_TEXT = `
 .mcsg-ui-preview{flex:0 0 auto;width:452px}
 .mcsg-ui-preview-clip{width:452px;border-radius:16px;overflow:hidden;background:#101116;box-shadow:0 14px 40px rgba(0,0,0,.32)}
 .mcsg-ui-preview-card{transform-origin:top left}
-.mcsg-ui-preview-hint{margin-top:10px;text-align:center;color:var(--color-text-secondary,#9a9ca8);font-size:12px}
 .mcsg-ui-side{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 /* padding-bottom 给悬浮按钮让出空间：网格滚到底时最后一行也不会压在按钮下面 */
 .mcsg-ui-grid{flex:1 1 auto;min-height:0;overflow:auto;align-content:start;grid-auto-rows:max-content;padding-bottom:58px;display:grid;grid-template-columns:repeat(3,100px);gap:12px;justify-content:start}
@@ -779,14 +778,13 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
         holder.innerHTML = cardHtmlOf(currentId.value)
         const { width, height } = measureCard(holder)
         const clip = holder.parentElement
-        // 可用高度取内容区实测值（扣除内边距与下方提示文案），预览不溢出，内容区就不会整体滚动、按钮位置也就固定
+        // 可用高度取内容区实测值（扣除内边距）：预览不溢出，内容区就不会整体滚动、按钮位置也就固定
         const bodyBox = clip?.closest('.mcsg-ui-body')
-        const hint = clip?.nextElementSibling
         const bodyStyle = bodyBox ? getComputedStyle(bodyBox) : null
         const verticalPadding = bodyStyle
           ? (parseFloat(bodyStyle.paddingTop) || 0) + (parseFloat(bodyStyle.paddingBottom) || 0)
           : 44
-        const availableHeight = Math.max(200, (bodyBox?.clientHeight || 0) - verticalPadding - (hint?.offsetHeight || 0))
+        const availableHeight = Math.max(200, (bodyBox?.clientHeight || 0) - verticalPadding)
         const availableWidth = clip?.parentElement?.offsetWidth || 452
         const scale = Math.min(availableWidth / width, availableHeight / height)
         holder.style.width = `${width}px`
@@ -873,11 +871,11 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
               h('button', { class: 'mcsg-ui-close', onClick: close }, '✕'),
             ]),
             h('div', { class: 'mcsg-ui-body' }, [
+              // 左侧只放预览本身（容器尺寸由 injectPreview 按可用空间算好后贴合）
               h('div', { class: 'mcsg-ui-preview' }, [
                 h('div', { class: 'mcsg-ui-preview-clip' }, [
                   h('div', { class: 'mcsg-ui-preview-card', ref: previewRef }),
                 ]),
-                h('div', { class: 'mcsg-ui-preview-hint' }, '二维码可被「长按识别」打开分享页'),
               ]),
                 h('div', { class: 'mcsg-ui-side' }, [
                   h('div', { class: 'mcsg-ui-grid' },
