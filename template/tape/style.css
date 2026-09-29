@@ -1,0 +1,21 @@
+/* 复古磁带卡片样式（磁带壳 + 封面标签 + 带轮窗口 + 螺丝装饰） */
+.mcsg-card--tape{position:relative;width:750px;height:1000px;overflow:hidden;background:linear-gradient(180deg,#f0eadc 0%,#e7dfcd 100%);font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--tape .shell{position:absolute;left:58px;right:58px;top:110px;height:470px;border-radius:30px;background:linear-gradient(180deg,#33363f 0%,#23252c 100%);box-shadow:0 26px 70px rgba(70,60,35,.4),inset 0 1px 0 rgba(255,255,255,.14);padding:26px;box-sizing:border-box}
+.mcsg-card--tape .label{position:relative;width:100%;height:196px;border-radius:14px;background:#f7f3e8;box-shadow:inset 0 -2px 0 rgba(0,0,0,.08);padding:20px;box-sizing:border-box;display:flex;gap:20px;overflow:hidden}
+.mcsg-card--tape .label-cover{flex:0 0 auto;width:156px;height:156px;border-radius:10px;object-fit:cover;background:#ddd5c2;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.mcsg-card--tape .label-info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:12px}
+.mcsg-card--tape .label-side{color:#b2483d;font-size:20px;font-weight:800;letter-spacing:4px}
+.mcsg-card--tape .label-name{color:#2c2a24;font-size:33px;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--tape .label-artist{color:#87816f;font-size:22px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--tape .window{position:relative;margin-top:24px;height:150px;border-radius:80px;background:#15161b;box-shadow:inset 0 3px 10px rgba(0,0,0,.7);display:flex;align-items:center;justify-content:space-between;padding:0 46px;box-sizing:border-box}
+.mcsg-card--tape .reel{width:108px;height:108px;border-radius:50%;background:radial-gradient(circle,#4a4d57 0 26%,#f2ede0 27% 40%,#4a4d57 41% 52%,#f2ede0 53% 62%,#3a3d46 63% 100%);box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.mcsg-card--tape .tape-line{position:absolute;left:70px;right:70px;top:50%;height:16px;transform:translateY(-50%);background:#2b2118;opacity:.85}
+.mcsg-card--tape .screws{position:absolute;left:0;right:0;bottom:16px;display:flex;justify-content:space-between;padding:0 26px;box-sizing:border-box}
+.mcsg-card--tape .screw{width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#8b8f99,#4c4f58)}
+.mcsg-card--tape .info{position:absolute;left:64px;right:64px;top:636px;text-align:center}
+.mcsg-card--tape .name{color:#33302a;font-size:40px;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--tape .artist{margin-top:16px;color:#8b8474;font-size:25px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--tape .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:#faf6ec;border-top:1px solid #e4dcc8}
+.mcsg-card--tape .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border:1px solid #e8e0cc;border-radius:10px;padding:5px;box-sizing:border-box}
+.mcsg-card--tape .brand-name{color:#43403a;font-size:26px;font-weight:700;letter-spacing:2px}
+.mcsg-card--tape .brand-tip{color:#a29a86;font-size:20px;margin-top:4px}

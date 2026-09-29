@@ -1,0 +1,14 @@
+/* 横幅卡片样式（上半封面大图 + 下半白色信息区 + 署名行） */
+.mcsg-card--banner{position:relative;width:750px;height:1000px;overflow:hidden;background:#fff;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--banner .cover{position:absolute;left:0;top:0;width:750px;height:640px;object-fit:cover;background:#e8e8ec}
+.mcsg-card--banner .fade{position:absolute;left:0;top:540px;width:100%;height:110px;background:linear-gradient(180deg,rgba(255,255,255,0) 0%,#fff 92%)}
+.mcsg-card--banner .info{position:absolute;left:0;right:0;top:628px;padding:0 64px;box-sizing:border-box}
+.mcsg-card--banner .name{color:#17181c;font-size:44px;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--banner .artist{margin-top:20px;color:#6f7280;font-size:27px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--banner .album{margin-top:14px;color:#a2a5b0;font-size:23px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--banner .sign{display:flex;align-items:center;justify-content:space-between;margin-top:52px;padding-top:32px;border-top:1px solid #ececf0;color:#b4b7c2;font-size:20px}
+.mcsg-card--banner .sign .dot{width:10px;height:10px;border-radius:50%;background:#4a8cff}
+.mcsg-card--banner .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:#fafafc;border-top:1px solid #ececf0}
+.mcsg-card--banner .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border:1px solid #e6e6ec;border-radius:10px;padding:5px;box-sizing:border-box}
+.mcsg-card--banner .brand-name{color:#26272e;font-size:26px;font-weight:700;letter-spacing:2px}
+.mcsg-card--banner .brand-tip{color:#9a9daa;font-size:20px;margin-top:4px}

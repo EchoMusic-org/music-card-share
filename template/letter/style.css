@@ -1,0 +1,16 @@
+/* 信笺卡片样式（米白双线框 + 衬线排版，参考酷狗 LetterPosterView） */
+.mcsg-card--letter{position:relative;width:750px;height:1000px;overflow:hidden;background:#f8f5ee;font-family:'Noto Serif SC','Songti SC',SimSun,serif}
+.mcsg-card--letter .frame{position:absolute;inset:34px;border:2px solid #cfc7b4;outline:1px solid #cfc7b4;outline-offset:5px;display:flex;flex-direction:column;align-items:center;padding:64px 56px 40px;box-sizing:border-box}
+.mcsg-card--letter .kicker{color:#b3ab92;font-size:19px;letter-spacing:8px}
+.mcsg-card--letter .date{margin-top:12px;color:#c1b9a3;font-size:18px;letter-spacing:2px}
+.mcsg-card--letter .orn{margin:52px 0 44px;color:#c9a86a;font-size:26px;letter-spacing:14px}
+.mcsg-card--letter .name{max-width:100%;color:#3b372e;font-size:52px;font-weight:700;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--letter .artist{margin-top:26px;color:#8d8571;font-size:25px;letter-spacing:3px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--letter .divider{width:64px;height:2px;background:#d8d1bf;margin:52px 0 44px;position:relative}
+.mcsg-card--letter .divider::after{content:'◆';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#cfc7b4;font-size:12px;background:#f8f5ee;padding:0 10px}
+.mcsg-card--letter .snippet{flex:0 1 auto;color:#a89f89;font-size:23px;line-height:2;text-align:center;font-style:italic;overflow:hidden}
+.mcsg-card--letter .cover-mini{margin-top:auto;width:150px;height:150px;border-radius:50%;background-size:cover;background-position:center;box-shadow:0 14px 36px rgba(90,80,55,.28)}
+.mcsg-card--letter .brand{flex:0 0 auto;margin-top:44px;display:flex;align-items:center;justify-content:center;gap:18px;width:100%}
+.mcsg-card--letter .brand-qr{width:62px;height:62px;flex:0 0 auto;background:#fff;border:1px solid #e2dccd;border-radius:8px;padding:4px;box-sizing:border-box}
+.mcsg-card--letter .brand-name{color:#5c574a;font-size:24px;font-weight:700;letter-spacing:2px}
+.mcsg-card--letter .brand-tip{color:#a49b85;font-size:19px;margin-top:4px}

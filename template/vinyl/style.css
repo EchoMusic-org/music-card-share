@@ -1,0 +1,15 @@
+/* 黑胶唱片卡片样式（封面矩形 + 右侧黑胶露出 + 标题倒影） */
+.mcsg-card--vinyl{position:relative;width:750px;height:1000px;overflow:hidden;background:radial-gradient(120% 90% at 20% 0%,#23252e 0%,#121318 55%,#0c0d11 100%);font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--vinyl .disc-wrap{position:absolute;left:60px;right:52px;top:96px;height:470px}
+.mcsg-card--vinyl .disc{position:absolute;right:0;top:16px;width:440px;height:440px;border-radius:50%;background:repeating-radial-gradient(circle at 50% 50%,#1d1f26 0 2.5px,#111218 2.5px 5.5px);box-shadow:0 26px 70px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06)}
+.mcsg-card--vinyl .disc::after{content:'';position:absolute;left:50%;top:50%;width:12px;height:12px;border-radius:50%;background:#0c0d11;transform:translate(-50%,-50%);box-shadow:0 0 0 5px rgba(255,255,255,.1)}
+.mcsg-card--vinyl .disc-label{position:absolute;left:50%;top:50%;width:132px;height:132px;border-radius:50%;transform:translate(-50%,-50%);background-size:cover;background-position:center;box-shadow:0 0 0 6px rgba(255,255,255,.08)}
+.mcsg-card--vinyl .cover{position:absolute;left:0;top:0;width:440px;height:440px;border-radius:26px;object-fit:cover;background:#262a36;box-shadow:24px 0 70px rgba(0,0,0,.5)}
+.mcsg-card--vinyl .info{position:absolute;left:64px;right:64px;top:640px}
+.mcsg-card--vinyl .name{color:#fff;font-size:46px;font-weight:800;letter-spacing:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;-webkit-box-reflect:below 3px linear-gradient(transparent 62%,rgba(255,255,255,.22))}
+.mcsg-card--vinyl .artist{margin-top:30px;color:rgba(255,255,255,.6);font-size:26px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--vinyl .album{display:inline-block;margin-top:26px;max-width:100%;box-sizing:border-box;padding:10px 22px;border-radius:999px;border:1px solid rgba(255,255,255,.22);color:rgba(255,255,255,.72);font-size:21px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--vinyl .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(255,255,255,.05);border-top:1px solid rgba(255,255,255,.08)}
+.mcsg-card--vinyl .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border-radius:10px;padding:5px;box-sizing:border-box}
+.mcsg-card--vinyl .brand-name{color:#fff;font-size:26px;font-weight:700;letter-spacing:2px}
+.mcsg-card--vinyl .brand-tip{color:rgba(255,255,255,.6);font-size:20px;margin-top:4px}

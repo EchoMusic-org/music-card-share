@@ -1,0 +1,19 @@
+/* 毛玻璃播放器卡片样式（类名以 .mcsg-card--glass 作用域隔离） */
+.mcsg-card--glass{position:relative;width:750px;height:1000px;overflow:hidden;background:#0f1218;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--glass .bg{position:absolute;left:-80px;top:-80px;right:-80px;bottom:-80px;background-size:cover;background-position:center;filter:blur(70px) brightness(.5) saturate(1.4)}
+.mcsg-card--glass .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,10,16,.05) 0%,rgba(8,10,16,.5) 100%)}
+.mcsg-card--glass .panel{position:absolute;left:58px;right:58px;top:88px;height:606px;border-radius:46px;background:rgba(255,255,255,.13);border:1.5px solid rgba(255,255,255,.28);box-shadow:0 34px 90px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.25);backdrop-filter:blur(26px) brightness(1.12);-webkit-backdrop-filter:blur(26px) brightness(1.12);box-sizing:border-box;padding:44px;display:flex;flex-direction:column;align-items:center}
+.mcsg-card--glass .cover{width:384px;height:384px;border-radius:26px;object-fit:cover;background:#262a36;box-shadow:0 20px 55px rgba(0,0,0,.45)}
+.mcsg-card--glass .panel .name{margin-top:36px;max-width:100%;color:#fff;font-size:40px;font-weight:700;letter-spacing:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--glass .panel .artist{margin-top:12px;max-width:100%;color:rgba(255,255,255,.66);font-size:25px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mcsg-card--glass .progress{position:absolute;left:58px;right:58px;top:722px}
+.mcsg-card--glass .bar{position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,.26)}
+.mcsg-card--glass .bar-played{position:absolute;left:0;top:0;bottom:0;width:42%;border-radius:3px;background:#fff}
+.mcsg-card--glass .bar-dot{position:absolute;left:42%;top:50%;width:20px;height:20px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.mcsg-card--glass .times{display:flex;justify-content:space-between;margin-top:18px;color:rgba(255,255,255,.72);font-size:22px;font-variant-numeric:tabular-nums}
+.mcsg-card--glass .controls{position:absolute;left:0;right:0;top:802px;display:flex;align-items:center;justify-content:center;gap:92px}
+.mcsg-card--glass .controls svg{display:block;filter:drop-shadow(0 3px 8px rgba(0,0,0,.35))}
+.mcsg-card--glass .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(6,8,12,.34);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.mcsg-card--glass .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border-radius:10px;padding:5px;box-sizing:border-box}
+.mcsg-card--glass .brand-name{color:#fff;font-size:26px;font-weight:700;letter-spacing:2px}
+.mcsg-card--glass .brand-tip{color:rgba(255,255,255,.66);font-size:20px;margin-top:4px}

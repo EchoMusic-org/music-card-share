@@ -1,0 +1,20 @@
+{
+  "id": "music-card-share",
+  "name": "歌曲卡片分享",
+  "version": "1.0.0",
+  "description": "优雅的歌曲卡片分享",
+  "author": "xiaotian2333",
+  "main": "index.js",
+  "icon": "",
+  "tags": [
+    "分享",
+    "卡片"
+  ],
+  "capabilities": {
+    "localFiles": true,
+    "kugouApi": true
+  },
+  "requires": {
+    "echoMusicVersion": ">=2.3.1"
+  }
+}
