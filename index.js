@@ -82,10 +82,34 @@ const buildQrSvg = (url) => {
 
 const SONG_HASH_RE = /^[a-f0-9]{32}$/i
 
+// 复制链接/分享文案用主程序自有分享页（保持主程序原有行为）
 const buildSongShareUrl = (hash) =>
   `https://hoowhoami.github.io/EchoMusic/share/?type=song&id=${encodeURIComponent(String(hash))}`
 
-/** 从分享文本（文案 + 链接）中解析歌曲分享目标：{hash, title, url} | null */
+// 卡片二维码用酷狗官方分享活动页（与官方歌曲卡片二维码同款）；album_audio_id 缺失时仅带 hash
+const buildSongQrUrl = (hash, albumAudioId) => {
+  const params = new URLSearchParams()
+  params.set('hash', String(hash))
+  const audioId = String(albumAudioId ?? '').trim()
+  if (audioId && Number.isFinite(Number(audioId)) && Number(audioId) > 0) {
+    params.set('album_audio_id', audioId)
+  }
+  return `https://h5.kugou.com/v2/v-5a15aeb1/index.html?${params.toString()}`
+}
+
+// 从歌曲数据中提取酷狗 album_audio_id（混合曲目 ID）：
+// 主程序歌曲对象用 camelCase（albumAudioId/mixSongId），酷狗接口原始记录用 snake_case
+const pickAlbumAudioId = (source) => {
+  const record = source || {}
+  const candidates = [record.albumAudioId, record.mixSongId, record.album_audio_id, record.mixsongid]
+  for (const value of candidates) {
+    const num = Number(value)
+    if (Number.isFinite(num) && num > 0) return String(num)
+  }
+  return ''
+}
+
+/** 从分享文本（文案 + 链接）中解析歌曲分享目标：{hash, title, url, albumAudioId?} | null */
 const parseSongShareText = (text) => {
   const raw = String(text || '')
   const urlMatch = raw.match(/https?:\/\/[^\s<>"'`]+/i)
@@ -97,11 +121,19 @@ const parseSongShareText = (text) => {
       url = null
     }
     if (url) {
+      const titleMatch = raw.match(/「([^」]+)」/)
+      const title = titleMatch ? titleMatch[1].trim() : ''
+      // 主程序自有分享页：type=song&id=<hash>
       const type = url.searchParams.get('type')
       const id = (url.searchParams.get('id') || '').trim()
       if (type === 'song' && SONG_HASH_RE.test(id)) {
-        const titleMatch = raw.match(/「([^」]+)」/)
-        return { hash: id, title: titleMatch ? titleMatch[1].trim() : '', url: urlMatch[0] }
+        return { hash: id, title, url: urlMatch[0] }
+      }
+      // 酷狗官方分享活动页：hash=<hash>&album_audio_id=...
+      const hash = (url.searchParams.get('hash') || '').trim()
+      if (url.hostname.endsWith('kugou.com') && SONG_HASH_RE.test(hash)) {
+        const audioId = (url.searchParams.get('album_audio_id') || '').trim()
+        return { hash, title, url: urlMatch[0], ...(audioId ? { albumAudioId: audioId } : {}) }
       }
     }
   }
@@ -164,6 +196,7 @@ const normalizeMetaRecord = (record) => {
     album: pickText(merged, ['album_name', 'albumname', 'AlbumName']),
     coverUrl: normalizeCover(coverRaw),
     duration: durationSec || Math.floor(durationMs / 1000),
+    albumAudioId: pickNumber(merged, ['album_audio_id', 'mixsongid']),
   }
 }
 
@@ -758,7 +791,7 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
       const previewRef = ref(null)
       let disposed = false
 
-      const data = buildCardData(shareContext.songLike, shareContext.title, shareContext.url)
+      const data = buildCardData(shareContext.songLike, shareContext.title, shareContext.qrUrl)
       const templateOf = (id) => templates.find((item) => item.id === id) || templates[0]
       const cardHtmlOf = (id) => templateOf(id).html(data)
 
@@ -959,7 +992,10 @@ export default async function activate(ctx) {
         return false
       }
       const songLike = await resolveSongData(ctx, shareContext.hash)
-      await openShareDialog({ ...shareContext, songLike, templates })
+      // 二维码单独用酷狗官方活动页链接（复制链接保持主程序原有分享页不变）：
+      // album_audio_id 优先取歌曲数据，其次分享文本里自带的
+      const qrUrl = buildSongQrUrl(shareContext.hash, pickAlbumAudioId(songLike) || shareContext.albumAudioId)
+      await openShareDialog({ ...shareContext, qrUrl, songLike, templates })
       return true
     } finally {
       opening = false
