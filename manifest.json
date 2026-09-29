@@ -5,10 +5,11 @@
   "description": "优雅的歌曲卡片分享",
   "author": "xiaotian2333",
   "main": "index.js",
-  "icon": "",
+  "path": "",
+  "repo": "https://github.com/EchoMusic-org/music-card-share",
+  "homepage": "https://github.com/EchoMusic-org/music-card-share",
   "tags": [
-    "分享",
-    "卡片"
+    "share"
   ],
   "capabilities": {
     "localFiles": true,
