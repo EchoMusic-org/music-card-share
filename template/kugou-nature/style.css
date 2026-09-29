@@ -1,0 +1,5 @@
+/* 酷狗「自然」卡片样式（封面叠在卡纸白窗上，fg 在下胶片露出） */
+.mcsg-card--kugou-nature{position:relative;width:720px;height:1146px;overflow:hidden;background:#dce8f2;font-family:'Manrope','PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--kugou-nature .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mcsg-card--kugou-nature .album{position:absolute;left:136px;top:346px;width:338px;height:338px;overflow:hidden}
+.mcsg-card--kugou-nature .album-img{width:100%;height:100%;object-fit:cover;background:#f4f8fb}

@@ -1,0 +1,4 @@
+/* 酷狗「实体专辑」卡片样式（封面在下、CD 盒壳在上） */
+.mcsg-card--kugou-album{position:relative;width:720px;height:1146px;overflow:hidden;background:#0b0d12;font-family:'Manrope','PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--kugou-album .album{position:absolute;left:104px;top:300px;width:443px;height:443px;object-fit:cover;background:#262a36}
+.mcsg-card--kugou-album .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}

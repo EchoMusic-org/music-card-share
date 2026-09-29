@@ -1,0 +1,4 @@
+/* 酷狗「播放器」卡片样式（圆形封面嵌入唱机中心，唱机壳在上） */
+.mcsg-card--kugou-player{position:relative;width:720px;height:1146px;overflow:hidden;background:#494949;font-family:'Manrope','PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--kugou-player .album{position:absolute;left:182px;top:202px;width:356px;height:356px;border-radius:50%;object-fit:cover;background:#2a2a2e}
+.mcsg-card--kugou-player .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}

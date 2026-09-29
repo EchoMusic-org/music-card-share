@@ -1,0 +1,5 @@
+/* 酷狗「液态玻璃」卡片样式（画布 720×1146，素材 783×1261 铺满缩放） */
+.mcsg-card--kugou-liquid{position:relative;width:720px;height:1146px;overflow:hidden;background:#0e1216;font-family:'Manrope','PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--kugou-liquid .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mcsg-card--kugou-liquid .album{position:absolute;left:125px;top:130px;width:470px;height:470px;border-radius:20px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+.mcsg-card--kugou-liquid .album-img{width:100%;height:100%;object-fit:cover;background:#2a2a2e}

@@ -303,15 +303,85 @@ const textEllipsis = 'overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 //   index.js   必需，导出 { id, name, html(data), async init?(ctx) }
 //     - id    模板唯一标识
 //     - name  弹窗里显示的名称
-//     - html(data)  同步返回卡片 HTML 字符串；根元素必须为 .mcsg-card，尺寸 750×1000
+//     - html(data)  同步返回卡片 HTML 字符串；根元素必须为 .mcsg-card，
+//                   尺寸自定（默认约定 750×1000，酷狗同款模板为 720×1146），
+//                   弹窗预览/缩略图与截图导出均按实际尺寸自适应
 //     - init(ctx)   可选异步初始化，用于加载自身资源；抛错则该模板被跳过
 //       ctx.loadText(rel)       读模板目录内文本资源（css/html/js/json…）
 //       ctx.loadDataURL(rel)    读模板目录内二进制资源转 dataURL（png/jpg/woff…）
-//       ctx.helpers             宿主共享工具（escapeHtml/formatDuration/brandHtml/coverImg…）
+//       ctx.helpers             宿主共享工具（escapeHtml/brandHtml/eraseImageRegion/echoBrandHtml…）
 //   其余文件   模板自己的 css/html/图片/字体等资源，经 init 加载
 // 数据契约：html(data) 的 data 字段见 buildCardData（name/artist/album/coverUrl/duration/qrSvg…）
 
 const CARD_SIZE = { width: CARD_WIDTH, height: CARD_HEIGHT }
+
+// 加载图片（dataURL/网络 URL 均可，dataURL 不受 CORS 限制可安全导出）
+const loadImageFromUrl = (src) =>
+  new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('图片加载失败'))
+    img.src = src
+  })
+
+/**
+ * 擦除图片指定区域：用区域正上方的取样条向下拉伸覆盖（适配渐变/纯色背景）。
+ * 用于清除酷狗官方前景素材中固化的"酷狗音乐"品牌行（各款位置不同由模板传入）。
+ */
+const eraseImageRegion = async (dataUrl, rect) => {
+  const img = await loadImageFromUrl(dataUrl)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const c2d = canvas.getContext('2d')
+  c2d.drawImage(img, 0, 0)
+  const { x, y, w, h, sampleH = 44 } = rect
+  c2d.drawImage(canvas, x, y - sampleH, w, sampleH, x, y, w, h)
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * EchoMusic 品牌行（替换酷狗前景图中固化的品牌行位置）。
+ * tone: 'light' 深色底白字 | 'dark' 浅色底黑字
+ */
+const echoBrandHtml = (left, top, tone = 'light') => {
+  const main = tone === 'light' ? '#ffffff' : '#26272e'
+  const sub = tone === 'light' ? 'rgba(255,255,255,.68)' : 'rgba(20,22,30,.55)'
+  const logoBg = tone === 'light' ? '#ffffff' : '#26272e'
+  const logoColor = tone === 'light' ? '#17181c' : '#ffffff'
+  return `<div style="position:absolute;left:${left}px;top:${top}px;display:flex;flex-direction:column;align-items:flex-start;gap:10px">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span style="width:42px;height:42px;border-radius:13px;background:${logoBg};color:${logoColor};font:800 25px/42px 'Segoe UI','PingFang SC',sans-serif;text-align:center">E</span>
+      <span style="color:${main};font-size:31px;font-weight:800;letter-spacing:1px">EchoMusic</span>
+    </div>
+    <span style="color:${sub};font-size:24px">长按识别可播放歌曲</span>
+  </div>`
+}
+
+/**
+ * 酷狗 json_str 模板的文本元素渲染（对应 tv_song_name / tv_singer_name / tv_listen_count）。
+ * 坐标/字号/颜色直接取自接口 json_str 的元素描述；left 为 null 时按整宽居中（gravity:center）。
+ */
+const kugouTextHtml = ({ left, top, size, color = '#ffffff', alpha = 1, align = 'left', width = 0, bold = true, text }) => {
+  const style = [
+    'position:absolute',
+    `top:${top}px`,
+    'line-height:1.3',
+    `font-size:${size}px`,
+    `color:${color}`,
+    alpha < 1 ? `opacity:${alpha}` : '',
+    `text-align:${align}`,
+    `font-weight:${bold ? 800 : 400}`,
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis',
+    left == null ? 'left:0;width:100%' : `left:${left}px`,
+    width ? `width:${width}px` : '',
+  ].filter(Boolean).join(';')
+  return `<div style="${style}">${escapeHtml(String(text ?? ''))}</div>`
+}
+
+/** 酷狗 json_str 模板的二维码元素渲染（白底圆角块内嵌本地生成的 SVG 码） */
+const kugouQrHtml = (left, top, svg, size = 88) =>
+  `<div style="position:absolute;left:${left}px;top:${top}px;width:${size}px;height:${size}px;background:#fff;border-radius:10px;padding:5px;box-sizing:border-box">${svg}</div>`
 
 // 注入模板的共享工具集
 const buildTemplateHelpers = () => ({
@@ -321,6 +391,11 @@ const buildTemplateHelpers = () => ({
   coverStyle,
   coverImg,
   brandHtml,
+  loadImageFromUrl,
+  eraseImageRegion,
+  echoBrandHtml,
+  kugouTextHtml,
+  kugouQrHtml,
   CARD_SIZE,
 })
 
@@ -419,12 +494,11 @@ const discoverTemplates = async (ctx) => {
 const buildCaptureStage = (cardHtml) => {
   const stage = document.createElement('div')
   stage.setAttribute('data-mcsg-stage', '1')
+  // 尺寸由卡片模板根元素（.mcsg-card）自身决定，stage 只负责定位与显隐
   stage.style.cssText = [
     'position:fixed',
     'left:0',
     'top:0',
-    `width:${CARD_WIDTH}px`,
-    `height:${CARD_HEIGHT}px`,
     'z-index:2147483647',
     'visibility:hidden',
     'pointer-events:none',
@@ -485,15 +559,15 @@ const ensureDialogStyles = () => {
 .mcsg-ui-close:hover{background:rgba(128,128,140,.16);color:var(--color-text-main,#ececf2)}
 .mcsg-ui-body{display:flex;gap:22px;padding:22px 24px;overflow:auto}
 .mcsg-ui-preview{flex:0 0 auto;width:452px}
-.mcsg-ui-preview-clip{width:452px;height:602px;border-radius:16px;overflow:hidden;background:#101116;box-shadow:0 14px 40px rgba(0,0,0,.32)}
-.mcsg-ui-preview-card{width:${CARD_WIDTH}px;height:${CARD_HEIGHT}px;transform:scale(.602);transform-origin:top left}
+.mcsg-ui-preview-clip{width:452px;border-radius:16px;overflow:hidden;background:#101116;box-shadow:0 14px 40px rgba(0,0,0,.32)}
+.mcsg-ui-preview-card{transform-origin:top left}
 .mcsg-ui-preview-hint{margin-top:10px;text-align:center;color:var(--color-text-secondary,#9a9ca8);font-size:12px}
 .mcsg-ui-side{flex:1;min-width:0;display:flex;flex-direction:column}
 .mcsg-ui-grid{display:grid;grid-template-columns:repeat(3,100px);gap:12px;justify-content:start}
 .mcsg-ui-style{position:relative;border:2px solid transparent;border-radius:12px;overflow:hidden;cursor:pointer;background:#101116;padding:0;outline:none}
 .mcsg-ui-style.is-active{border-color:#4a8cff;box-shadow:0 0 0 3px rgba(74,140,255,.22)}
-.mcsg-ui-style-clip{width:100px;height:133px;position:relative}
-.mcsg-ui-style-card{position:absolute;left:0;top:0;width:${CARD_WIDTH}px;height:${CARD_HEIGHT}px;transform:scale(.1333);transform-origin:top left;pointer-events:none}
+.mcsg-ui-style-clip{width:100px;position:relative}
+.mcsg-ui-style-card{position:absolute;left:0;top:0;transform-origin:top left;pointer-events:none}
 .mcsg-ui-style-name{position:absolute;left:0;right:0;bottom:0;padding:14px 0 5px;text-align:center;color:#fff;font-size:12px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.72))}
 .mcsg-ui-actions{margin-top:auto;padding-top:18px;display:flex;flex-direction:column;gap:10px}
 .mcsg-ui-btn{height:42px;border-radius:11px;border:1px solid rgba(128,128,140,.3);background:transparent;color:var(--color-text-main,#ececf2);font-size:14px;cursor:pointer;transition:background .15s}
@@ -522,15 +596,44 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
       const templateOf = (id) => templates.find((item) => item.id === id) || templates[0]
       const cardHtmlOf = (id) => templateOf(id).html(data)
 
-      const injectPreview = () => {
-        if (previewRef.value) previewRef.value.innerHTML = cardHtmlOf(currentId.value)
+      // 读取卡片根元素实际尺寸（各模板尺寸可不同，酷狗同款为 720×1146）
+      const measureCard = (root) => {
+        const card = root?.querySelector('.mcsg-card')
+        return {
+          width: card?.offsetWidth || CARD_WIDTH,
+          height: card?.offsetHeight || CARD_HEIGHT,
+        }
       }
 
+      // 预览区自适应：按容器可用空间等比缩放，clip 容器贴合缩放后尺寸
+      const injectPreview = () => {
+        const holder = previewRef.value
+        if (!holder) return
+        holder.innerHTML = cardHtmlOf(currentId.value)
+        const { width, height } = measureCard(holder)
+        const scale = Math.min(452 / width, 596 / height)
+        holder.style.width = `${width}px`
+        holder.style.height = `${height}px`
+        holder.style.transform = `scale(${scale})`
+        const clip = holder.parentElement
+        clip.style.width = `${Math.round(width * scale)}px`
+        clip.style.height = `${Math.round(height * scale)}px`
+      }
+
+      // 缩略图自适应：统一按 100px 列宽等比缩放
       const injectThumbs = () => {
         document.querySelectorAll('[data-mcsg-thumb]').forEach((node) => {
           const id = node.getAttribute('data-mcsg-thumb')
           const holder = node.querySelector('.mcsg-ui-style-card')
-          if (holder) holder.innerHTML = cardHtmlOf(id)
+          if (!holder) return
+          holder.innerHTML = cardHtmlOf(id)
+          const { width, height } = measureCard(holder)
+          const scale = 100 / width
+          holder.style.width = `${width}px`
+          holder.style.height = `${height}px`
+          holder.style.transform = `scale(${scale})`
+          const clip = node.querySelector('.mcsg-ui-style-clip')
+          if (clip) clip.style.height = `${Math.round(height * scale)}px`
         })
       }
 

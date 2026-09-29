@@ -1,0 +1,5 @@
+/* 酷狗「相机」卡片样式 */
+.mcsg-card--kugou-camera{position:relative;width:720px;height:1146px;overflow:hidden;background:#141210;font-family:'Manrope','PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+.mcsg-card--kugou-camera .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mcsg-card--kugou-camera .album{position:absolute;left:212px;top:403px;width:296px;height:296px}
+.mcsg-card--kugou-camera .album-img{width:100%;height:100%;object-fit:cover;background:#2a2a2e}
