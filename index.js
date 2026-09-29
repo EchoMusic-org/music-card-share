@@ -137,14 +137,24 @@ const normalizeCover = (raw) => {
 // 酷狗原始歌曲记录 → 卡片渲染数据（字段优先级参考主程序 mapper，宽松提取）
 const normalizeMetaRecord = (record) => {
   if (!record || typeof record !== 'object') return null
+  const info = record.info && typeof record.info === 'object' ? record.info : {}
   const audioInfo = record.audio_info && typeof record.audio_info === 'object' ? record.audio_info : {}
+  const albumInfo = record.album_info && typeof record.album_info === 'object' ? record.album_info : {}
   const transParam = record.trans_param && typeof record.trans_param === 'object' ? record.trans_param : {}
-  const merged = { ...audioInfo, ...transParam, ...record }
+  const merged = { ...info, ...albumInfo, ...audioInfo, ...transParam, ...record }
 
   let name = pickText(merged, ['songname', 'audio_name', 'name', 'filename', 'ori_audio_name'])
   let artist = pickText(merged, ['author_name', 'singername', 'singer', 'AuthorName'])
   if (!artist && name.includes(' - ')) artist = name.split(' - ')[0]
   if (name.includes(' - ')) name = name.split(' - ').slice(1).join(' - ')
+
+  // 封面分散在不同层级，按主程序 buildSongFromPrivilege / parseTrackMetadataFromPrivilege 的路径回退：
+  // 顶层 album_sizable_cover / sizable_cover / pic / img，record.info.image / img，
+  // record.album_info.sizable_cover / cover，record.trans_param.union_cover
+  const coverRaw = pickText(merged, ['album_sizable_cover', 'sizable_cover', 'cover', 'pic', 'imgurl', 'img', 'image'])
+    || pickText(info, ['image', 'img'])
+    || pickText(albumInfo, ['sizable_cover', 'cover', 'pic', 'img'])
+    || pickText(transParam, ['union_cover'])
 
   const durationSec = pickNumber(merged, ['time_length', 'duration'])
   const durationMs = pickNumber(merged, ['timelength', 'duration_128'])
@@ -152,9 +162,7 @@ const normalizeMetaRecord = (record) => {
     title: name,
     artist,
     album: pickText(merged, ['album_name', 'albumname', 'AlbumName']),
-    coverUrl: normalizeCover(
-      pickText(merged, ['album_sizable_cover', 'sizable_cover', 'cover', 'pic', 'img', 'imgurl', 'image']),
-    ),
+    coverUrl: normalizeCover(coverRaw),
     duration: durationSec || Math.floor(durationMs / 1000),
   }
 }
@@ -682,6 +690,11 @@ const exportCardImage = async (ctx, cardRoot, cardHtml) => {
 
 // ── 分享弹窗 ──
 
+// 主程序原始的复制能力。接管生效后 share.copy / clipboard.writeText 都已被替换成开弹窗的逻辑，
+// 弹窗内的“复制链接”只有用原函数才能真的写剪贴板。
+let hostOriginalCopy = null
+let hostWriteText = null
+
 const DIALOG_STYLE_ID = 'mcsg-dialog-style'
 
 // 弹窗样式文本单列成常量：供 ensureDialogStyles 每次打开时覆盖比对（见该函数注释）
@@ -834,7 +847,11 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
         // 分享文本为空时（如命令入口）退化为仅复制链接
         const text = shareContext.text || shareContext.url
         try {
-          if (window.electron?.share?.copy) await window.electron.share.copy(text)
+          // 优先用接管前保存的原函数：接管生效期间 share.copy / clipboard.writeText
+          // 都已被替换成“打开弹窗”，直接调用会绕回接管逻辑而不是复制
+          if (hostOriginalCopy) await hostOriginalCopy(text)
+          else if (hostWriteText) await hostWriteText(text)
+          else if (window.electron?.share?.copy) await window.electron.share.copy(text)
           else await navigator.clipboard.writeText(text)
           ctx.toast.success('分享链接已复制')
         } catch {
@@ -951,23 +968,53 @@ export default async function activate(ctx) {
     }
   }
 
-  // 覆盖模式下移除主程序误弹的“分享链接已复制”（实际并未复制，由卡片弹窗接管）
-  const suppressHostToast = () => {
-    setTimeout(() => {
-      try {
-        const toastStore = ctx.pinia?._s?.get?.('toast')
-        if (!toastStore?.items) return
-        const index = toastStore.items.findIndex((item) => item.message === '分享链接已复制')
-        if (index >= 0) toastStore.items.splice(index, 1)
-      } catch {
-        // 防御：toast 清理失败不影响主流程
+  /**
+   * 主程序在 copyShareTarget 之后会无条件弹「分享链接已复制」，而接管模式下并没有真复制。
+   * 这里改写 toast store 的 actionCompleted：只吞掉被显式标记的那一条，其余提示照常显示；
+   * 比“事后按文案删除”更干净——提示根本不会出现，也就没有一闪而过的残影。
+   */
+  const createShareToastGuard = () => {
+    let pending = false
+    try {
+      const toastStore = ctx.pinia?._s?.get?.('toast')
+      if (!toastStore || typeof toastStore.actionCompleted !== 'function') return null
+      const original = toastStore.actionCompleted
+      toastStore.actionCompleted = function patchedActionCompleted(message, ...rest) {
+        if (pending && String(message ?? '').trim() === '分享链接已复制') {
+          pending = false
+          return undefined
+        }
+        return original.call(this, message, ...rest)
       }
-    }, 80)
+      return {
+        /** 声明“接下来那一条分享提示由接管吞掉” */
+        expect: () => {
+          pending = true
+        },
+        /** 回退到真复制时撤销吞掉标记，让提示正常出现 */
+        cancel: () => {
+          pending = false
+        },
+        dispose: () => {
+          pending = false
+          try {
+            if (toastStore.actionCompleted !== original) toastStore.actionCompleted = original
+          } catch {
+            // 还原失败不影响卸载
+          }
+        },
+      }
+    } catch {
+      return null
+    }
   }
 
   // ── 接管层 1（首选）：覆盖 share.copy，歌曲分享不再复制链接，直接弹卡片弹窗 ──
-  // contextBridge 暴露的对象属性可重新赋值（configurable: false 但 writable: true），
-  // 仍以运行时探测为准；失败则降级到接管层 2。
+  // 注意：Electron 的 contextBridge 把暴露属性定义为只读（writable/configurable 均为 false），
+  // 这种情况下赋值会抛错，只能降级到接管层 2。
+  // toast 拦截器两条接管路径共用
+  const shareToastGuard = createShareToastGuard()
+
   const installCopyPatch = () => {
     const share = window.electron?.share
     if (!share || typeof share.copy !== 'function') return null
@@ -981,21 +1028,67 @@ export default async function activate(ctx) {
     }
     if (share.copy !== probe) return null
 
+    // 接管期间 share.copy 已被替换，弹窗里的“复制链接”必须用这里保存的原函数
+    hostOriginalCopy = originalCopy
+
     const patchedCopy = async (text) => {
       const parsed = parseSongShareText(text)
       // 非歌曲分享（歌单/专辑/歌手/插件/一起听等）透传原始复制行为
       if (!parsed) return originalCopy(text)
+      // 预期主程序随后会弹「分享链接已复制」，先声明吞掉它
+      shareToastGuard?.expect()
       const opened = await requestOpen({ ...parsed, text })
-      // 无可用模板时回退原始复制链接行为
-      if (!opened) return originalCopy(text)
-      suppressHostToast()
+      if (!opened) {
+        // 无可用模板时回退原始复制链接行为：既然真的复制了，提示就该正常出现
+        shareToastGuard?.cancel()
+        return originalCopy(text)
+      }
       ctx.toast.info('已打开卡片分享，选择你喜欢的样式吧')
       return true
     }
     share.copy = patchedCopy
     return () => {
+      hostOriginalCopy = null
       try {
         share.copy = originalCopy
+      } catch {
+        // 还原失败不影响卸载
+      }
+    }
+  }
+
+  // ── 兜底拦截：覆盖 navigator.clipboard.writeText（主程序只在 share.copy 缺失时才走它）──
+  // 命中歌曲分享文本同样改为开卡片弹窗，不写剪贴板。
+  const installClipboardFallback = () => {
+    const clipboard = navigator.clipboard
+    const originalWriteText = clipboard && typeof clipboard.writeText === 'function'
+      ? clipboard.writeText.bind(clipboard)
+      : null
+    if (!originalWriteText) return null
+
+    const patchedWriteText = async (text) => {
+      const parsed = parseSongShareText(text)
+      if (!parsed) return originalWriteText(text)
+      shareToastGuard?.expect()
+      const opened = await requestOpen({ ...parsed, text })
+      if (!opened) {
+        shareToastGuard?.cancel()
+        return originalWriteText(text)
+      }
+      ctx.toast.info('已打开卡片分享，选择你喜欢的样式吧')
+      return undefined
+    }
+    try {
+      clipboard.writeText = patchedWriteText
+    } catch {
+      return null
+    }
+    if (clipboard.writeText !== patchedWriteText) return null
+    hostWriteText = originalWriteText
+    return () => {
+      hostWriteText = null
+      try {
+        clipboard.writeText = originalWriteText
       } catch {
         // 还原失败不影响卸载
       }
@@ -1022,11 +1115,299 @@ export default async function activate(ctx) {
     return () => window.removeEventListener('echomusic:share-copied', handler)
   }
 
-  const restoreCopy = installCopyPatch()
-  if (restoreCopy) {
-    ctx.dispose(restoreCopy)
-  } else {
-    console.warn('[music-card-share] share.copy 不可覆盖，降级为分享后弹窗模式')
+  // ── 接管层 0（点击劫持）：share.copy 只读时 API 层拦不住，改为在捕获阶段拦下分享点击 ──
+  // 在捕获阶段停止传播，主程序自身的分享逻辑（复制链接 + 「分享链接已复制」提示）完全不会执行，
+  // 直接由插件打开卡片弹窗。目标歌曲解析不出来时放行，保持主程序原行为（不会误伤非歌曲分享）。
+  const installShareTriggerHijack = () => {
+    // 最近一次右键命中的歌曲行：菜单项本身不带数据，靠它定位目标歌曲。
+    // 行上只有 song.id；歌名/歌手文本用于在本地数据与搜索接口里兜底反查。
+    let lastContextSong = { id: '', title: '', artist: '' }
+
+    const rememberContextRow = (event) => {
+      const row = event.target?.closest?.('[data-song-row]')
+      lastContextSong = {
+        id: String(row?.getAttribute?.('data-song-id') || ''),
+        title: String(row?.querySelector?.('.song-title')?.textContent || '').trim(),
+        artist: String(row?.querySelector?.('.song-artist')?.textContent || '').trim(),
+      }
+    }
+
+    const isHashSong = (song) => Boolean(song) && SONG_HASH_RE.test(String(song.hash ?? ''))
+    const readSongTitle = (song) => String(song?.name ?? song?.title ?? song?.songname ?? '').trim()
+
+    // 在播放器/队列/主程序全部 store 里查找满足条件的歌曲对象
+    // （右键的歌曲可能来自任意列表页，所以不能只查队列）
+    const findSongInStores = (predicate) => {
+      let budget = 6000
+      const sources = []
+      const push = (value) => {
+        if (value) sources.push(value)
+      }
+      try { push(ctx.stores?.player?.currentTrack) } catch { /* 忽略不可读字段 */ }
+      try { push(ctx.stores?.player?.queueSongs) } catch { /* 忽略不可读字段 */ }
+      try { push(ctx.stores?.player?.playbackQueue) } catch { /* 忽略不可读字段 */ }
+      try { push(ctx.playlist?.getQueueSongs?.()) } catch { /* 忽略不可读字段 */ }
+      try {
+        const stores = ctx.pinia?._s
+        if (stores && typeof stores.forEach === 'function') stores.forEach((store) => push(store))
+      } catch { /* 忽略不可读字段 */ }
+      try { push(ctx.stores?.playlist) } catch { /* 忽略不可读字段 */ }
+
+      const walk = (value, depth) => {
+        if (!value || depth > 5 || budget <= 0) return null
+        budget -= 1
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            const found = walk(item, depth + 1)
+            if (found) return found
+          }
+          return null
+        }
+        if (typeof value !== 'object') return null
+        if (predicate(value)) return value
+        let keys = []
+        try {
+          keys = Object.keys(value)
+        } catch {
+          return null
+        }
+        for (const key of keys) {
+          if (key.startsWith('__') || key === 'constructor') continue
+          let descriptor = null
+          try {
+            descriptor = Object.getOwnPropertyDescriptor(value, key)
+          } catch {
+            continue
+          }
+          // 跳过 getter/computed/函数，避免触发计算或副作用
+          if (!descriptor || descriptor.get || typeof descriptor.value === 'function') continue
+          const found = walk(descriptor.value, depth + 1)
+          if (found) return found
+        }
+        return null
+      }
+      for (const source of sources) {
+        const found = walk(source, 0)
+        if (found) return found
+      }
+      return null
+    }
+
+    const findSongById = (idText) => {
+      if (!idText) return null
+      return findSongInStores((song) => isHashSong(song) && String(song.id ?? '') === idText)
+    }
+
+    // 用行内的歌名/歌手在本地数据里匹配（收藏页等列表数据在组件内，不在 store 里时的兜底）
+    const findSongByText = (title, artist) => {
+      const targetTitle = String(title || '').trim().toLowerCase()
+      if (!targetTitle) return null
+      const targetArtist = String(artist || '').trim().toLowerCase()
+      const listOf = (values) => values.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+      return findSongInStores((song) => {
+        if (!isHashSong(song)) return false
+        if (!listOf([song.name, song.title, song.songname]).includes(targetTitle)) return false
+        if (!targetArtist) return true
+        const artists = listOf([song.artist, song.singername, song.author_name])
+        return artists.some((item) => item.includes(targetArtist) || targetArtist.includes(item))
+      })
+    }
+
+    // 收集响应里所有含 32 位 hash 的候选对象：搜索接口的响应结构不稳定，
+    // 不猜字段名（lists/file_hash/SongName 等大小写与命名都变过），直接扫出来再按内容匹配
+    const collectSongLikeObjects = (value, depth = 0, out = []) => {
+      if (!value || depth > 6 || out.length > 300) return out
+      if (Array.isArray(value)) {
+        for (const item of value) collectSongLikeObjects(item, depth + 1, out)
+        return out
+      }
+      if (typeof value !== 'object') return out
+      out.push(value)
+      let keys = []
+      try {
+        keys = Object.keys(value)
+      } catch {
+        return out
+      }
+      for (const key of keys) {
+        const child = value[key]
+        if (child && typeof child === 'object') collectSongLikeObjects(child, depth + 1, out)
+      }
+      return out
+    }
+
+    const pickFrom = (item, keys) => {
+      for (const key of keys) {
+        const value = item?.[key]
+        if (typeof value === 'string' && value.trim()) return value.trim()
+      }
+      return ''
+    }
+
+    // 本地都找不到时，用歌名+歌手走主程序搜索接口反查 hash
+    const searchSongByText = async (title, artist) => {
+      const keywords = [title, artist].filter(Boolean).join(' ').trim()
+      if (!keywords) return null
+      try {
+        const payload = await ctx.kugou?.search?.search?.(keywords, 'song', 1, 10)
+        const targetTitle = String(title || '').trim().toLowerCase()
+        const targetArtist = String(artist || '').trim().toLowerCase()
+        const hit = collectSongLikeObjects(payload).find((item) => {
+          const hash = pickFrom(item, ['hash', 'hash_128', 'file_hash', 'FileHash', 'audio_hash'])
+          if (!SONG_HASH_RE.test(hash)) return false
+          const itemTitle = pickFrom(item, ['songname', 'SongName', 'audio_name', 'name']).toLowerCase()
+          if (itemTitle !== targetTitle) return false
+          if (!targetArtist) return true
+          const itemArtist = pickFrom(item, ['singername', 'SingerName', 'author_name', 'singer']).toLowerCase()
+          return itemArtist.includes(targetArtist) || targetArtist.includes(itemArtist)
+        })
+        if (!hit) return null
+        return {
+          hash: pickFrom(hit, ['hash', 'hash_128', 'file_hash', 'FileHash', 'audio_hash']),
+          title: pickFrom(hit, ['songname', 'SongName', 'audio_name', 'name']) || title,
+        }
+      } catch (error) {
+        console.warn('[music-card-share] 搜索反查歌曲失败', error)
+        return null
+      }
+    }
+
+    // 识别分享触发元素：
+    //   row-menu —— 歌曲列表右键菜单里的「分享」（目标来自被右键的那一行）
+    //   page     —— 页面上的分享按钮：播放栏/歌词页/歌曲详情页（Button 组件把 tooltip 输出为
+    //               aria-label="分享"；另外兼容 title 与纯文本「分享」的按钮/菜单项）
+    const resolveTrigger = (target) => {
+      const rowMenuItem = target.closest('button.song-context-item')
+      if (rowMenuItem && String(rowMenuItem.textContent || '').trim() === '分享') return 'row-menu'
+      if (target.closest('[aria-label="分享"], [title="分享"]')) return 'page'
+      const textItem = target.closest('button, [role="menuitem"]')
+      if (textItem && String(textItem.textContent || '').trim() === '分享') return 'page'
+      return ''
+    }
+
+    // 从当前路由读歌曲：歌曲详情页把歌曲放在路由参数里（hash/类型在 query，标题也在 query）
+    const readRoutedSong = (href = String(window.location.href || '')) => {
+      try {
+        const url = new URL(href)
+        const search = new URLSearchParams(url.search)
+        const hashPart = String(url.hash || '')
+        const queryIndex = hashPart.indexOf('?')
+        const hashQuery = queryIndex >= 0 ? new URLSearchParams(hashPart.slice(queryIndex + 1)) : null
+        const readParam = (key) => String(search.get(key) || hashQuery?.get(key) || '').trim()
+
+        let hash = readParam('hash')
+        if (!SONG_HASH_RE.test(hash)) {
+          // 路径段里直接带 hash 的情况（如 /song/<hash>）
+          const segments = `${url.pathname}/${hashPart.split('?')[0]}`.split('/')
+          hash = segments.map((segment) => segment.trim()).find((segment) => SONG_HASH_RE.test(segment)) || ''
+        }
+        if (!SONG_HASH_RE.test(hash)) return null
+        return { hash, title: readParam('title') }
+      } catch {
+        return null
+      }
+    }
+
+    const currentTrackSong = () => {
+      const track = ctx.player?.currentTrack?.value || ctx.stores?.player?.currentTrackSnapshot
+      const hash = String(track?.hash || '').trim()
+      if (!SONG_HASH_RE.test(hash)) return null
+      return { hash, title: String(track?.name || track?.title || '').trim() }
+    }
+
+    // 右键行的歌曲：行上只有 song.id（且常是 mixSongId），按三级回退定位
+    //   ① id 在所有 store 里反查 → ② 行内歌名/歌手在本地数据里匹配 → ③ 走搜索接口反查
+    const resolveRowMenuSong = async () => {
+      const byId = findSongById(lastContextSong.id)
+      if (byId) return { hash: String(byId.hash), title: readSongTitle(byId) }
+
+      const byText = findSongByText(lastContextSong.title, lastContextSong.artist)
+      if (byText) {
+        return { hash: String(byText.hash), title: readSongTitle(byText) || lastContextSong.title }
+      }
+
+      const searched = await searchSongByText(lastContextSong.title, lastContextSong.artist)
+      if (searched) {
+        return searched
+      }
+      return null
+    }
+
+    const resolveSong = async (kind, triggerEl) => {
+      if (kind === 'row-menu') return resolveRowMenuSong()
+      // 播放栏与歌词页底部栏的分享按钮分享的是“正在播放”的歌曲；
+      // 其他位置（歌曲详情页/详情及评论页）分享的是当前页面上的歌曲，只能按路由参数定位。
+      // 路由里读不到歌曲就放行 —— 专辑/歌单/歌手详情页的分享按钮特征与此处相同，
+      // 若在这里回退成“当前播放歌曲”，会把它们的分享也劫持掉。
+      const inPlayerScope = Boolean(
+        triggerEl.closest('.lyric-bar')
+        || triggerEl.closest('.player-bar-action-strip')
+        || triggerEl.closest('.player-actions'),
+      )
+      if (!inPlayerScope) return readRoutedSong()
+      return currentTrackSong()
+    }
+
+    const onClickCapture = (event) => {
+      const target = event.target
+      if (!target?.closest) return
+      const kind = resolveTrigger(target)
+      if (!kind) return
+      const triggerEl = target.closest('[aria-label="分享"], [title="分享"]') || target
+
+      // 先同步拦截：解析可能要走搜索接口，等结果再拦就晚了（主程序已经复制完）
+      event.preventDefault()
+      event.stopPropagation()
+
+      void (async () => {
+        try {
+          const song = await resolveSong(kind, triggerEl)
+          if (!song) {
+            // 已拦下主程序的复制，但没能识别歌曲：明确告知，而不是悄悄复制
+            ctx.toast.warning('没能识别这首歌，分享链接未复制')
+            return
+          }
+          const url = buildSongShareUrl(song.hash)
+          const text = song.title
+            ? `EchoMusic 给你分享了歌曲「${song.title}」，快去看看吧\n${url}`
+            : url
+          void requestOpen({ hash: song.hash, title: song.title, url, text })
+        } catch (error) {
+          console.warn('[music-card-share] 分享解析失败', error)
+          ctx.toast.warning('分享失败，请稍后重试')
+        }
+      })()
+    }
+
+    document.addEventListener('contextmenu', rememberContextRow, true)
+    document.addEventListener('click', onClickCapture, true)
+    return () => {
+      document.removeEventListener('contextmenu', rememberContextRow, true)
+      document.removeEventListener('click', onClickCapture, true)
+    }
+  }
+
+  // 安装两条接管路径：
+  //   installCopyPatch       —— share.copy 可覆盖时，能从源头阻止复制（首选）
+  //   installClipboardFallback —— 覆盖 navigator.clipboard.writeText；主程序目前优先走
+  //     share.copy，只在 share.copy 缺失时才用剪贴板 API，所以它主要防御其它写入路径
+  //   installShareTriggerHijack —— 点击劫持，share.copy 只读时唯一能“完全不触发主程序逻辑”的手段
+  const restoreCopyPatch = installCopyPatch()
+  const restoreClipboard = installClipboardFallback()
+  const restoreHijack = installShareTriggerHijack()
+  const restores = [restoreCopyPatch, restoreClipboard, restoreHijack].filter(Boolean)
+  if (restores.length > 0) {
+    ctx.dispose(() => {
+      restores.forEach((restore) => restore())
+      shareToastGuard?.dispose()
+    })
+  }
+
+  // share.copy 不可覆盖时（Electron contextBridge 暴露的是只读属性），主程序会照常把链接
+  // 写进剪贴板，且不会经过上面两个补丁，卡片弹窗只能靠事件兜底：复制完成后补弹一次。
+  // 这种模式下不要吞「分享链接已复制」提示 —— 链接确实复制了，提示是准确的。
+  if (!restoreCopyPatch) {
+    console.warn('[music-card-share] share.copy 只读（contextBridge），无法阻止主程序复制链接，改用分享后弹窗模式')
     const removeFallback = installEventFallback()
     if (removeFallback) ctx.dispose(removeFallback)
   }
