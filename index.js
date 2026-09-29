@@ -1274,10 +1274,21 @@ export default async function activate(ctx) {
     //   row-menu —— 歌曲列表右键菜单里的「分享」（目标来自被右键的那一行）
     //   page     —— 页面上的分享按钮：播放栏/歌词页/歌曲详情页（Button 组件把 tooltip 输出为
     //               aria-label="分享"；另外兼容 title 与纯文本「分享」的按钮/菜单项）
+    // 返回的 kind 决定“拦截后能否确定是歌曲分享”：
+    //   row-menu / player —— 一定是歌曲分享；page —— 可能是别的资源（插件、歌单、专辑…），
+    //   必须先从路由同步解析出歌曲才允许拦截，否则会误伤插件商店等处的分享
     const resolveTrigger = (target) => {
       const rowMenuItem = target.closest('button.song-context-item')
       if (rowMenuItem && String(rowMenuItem.textContent || '').trim() === '分享') return 'row-menu'
-      if (target.closest('[aria-label="分享"], [title="分享"]')) return 'page'
+      const shareButton = target.closest('[aria-label="分享"], [title="分享"]')
+      if (shareButton) {
+        const inPlayerScope = Boolean(
+          shareButton.closest('.lyric-bar')
+          || shareButton.closest('.player-bar-action-strip')
+          || shareButton.closest('.player-actions'),
+        )
+        return inPlayerScope ? 'player' : 'page'
+      }
       const textItem = target.closest('button, [role="menuitem"]')
       if (textItem && String(textItem.textContent || '').trim() === '分享') return 'page'
       return ''
@@ -1331,19 +1342,13 @@ export default async function activate(ctx) {
       return null
     }
 
-    const resolveSong = async (kind, triggerEl) => {
-      if (kind === 'row-menu') return resolveRowMenuSong()
-      // 播放栏与歌词页底部栏的分享按钮分享的是“正在播放”的歌曲；
-      // 其他位置（歌曲详情页/详情及评论页）分享的是当前页面上的歌曲，只能按路由参数定位。
-      // 路由里读不到歌曲就放行 —— 专辑/歌单/歌手详情页的分享按钮特征与此处相同，
-      // 若在这里回退成“当前播放歌曲”，会把它们的分享也劫持掉。
-      const inPlayerScope = Boolean(
-        triggerEl.closest('.lyric-bar')
-        || triggerEl.closest('.player-bar-action-strip')
-        || triggerEl.closest('.player-actions'),
-      )
-      if (!inPlayerScope) return readRoutedSong()
-      return currentTrackSong()
+    // 打开卡片弹窗（拼好分享文案）
+    const openCardFor = (song) => {
+      const url = buildSongShareUrl(song.hash)
+      const text = song.title
+        ? `EchoMusic 给你分享了歌曲「${song.title}」，快去看看吧\n${url}`
+        : url
+      void requestOpen({ hash: song.hash, title: song.title, url, text })
     }
 
     const onClickCapture = (event) => {
@@ -1351,25 +1356,41 @@ export default async function activate(ctx) {
       if (!target?.closest) return
       const kind = resolveTrigger(target)
       if (!kind) return
-      const triggerEl = target.closest('[aria-label="分享"], [title="分享"]') || target
 
-      // 先同步拦截：解析可能要走搜索接口，等结果再拦就晚了（主程序已经复制完）
+      // 播放栏/歌词栏的分享：目标就是正在播放的歌，同步即可确定
+      if (kind === 'player') {
+        const song = currentTrackSong()
+        if (!song) return
+        event.preventDefault()
+        event.stopPropagation()
+        openCardFor(song)
+        return
+      }
+
+      // 其他位置的分享按钮（详情页、插件商店、歌单页…）：只有能从路由同步解析出歌曲才拦。
+      // 解析不出就完全放行 —— 否则插件商店这类非歌曲分享会被误拦，既没复制也没弹卡片。
+      if (kind === 'page') {
+        const song = readRoutedSong()
+        if (!song) return
+        event.preventDefault()
+        event.stopPropagation()
+        openCardFor(song)
+        return
+      }
+
+      // 歌曲列表右键菜单：确定是歌曲分享，但行上只有 song.id，需要异步反查 ——
+      // 先拦下（否则反查期间主程序已经把链接复制完了），再解析
       event.preventDefault()
       event.stopPropagation()
-
       void (async () => {
         try {
-          const song = await resolveSong(kind, triggerEl)
+          const song = await resolveRowMenuSong()
           if (!song) {
             // 已拦下主程序的复制，但没能识别歌曲：明确告知，而不是悄悄复制
             ctx.toast.warning('没能识别这首歌，分享链接未复制')
             return
           }
-          const url = buildSongShareUrl(song.hash)
-          const text = song.title
-            ? `EchoMusic 给你分享了歌曲「${song.title}」，快去看看吧\n${url}`
-            : url
-          void requestOpen({ hash: song.hash, title: song.title, url, text })
+          openCardFor(song)
         } catch (error) {
           console.warn('[music-card-share] 分享解析失败', error)
           ctx.toast.warning('分享失败，请稍后重试')
