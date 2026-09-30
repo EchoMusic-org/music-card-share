@@ -6,7 +6,8 @@
 .mcsg-card--aurora .cover{width:400px;height:400px;border-radius:50%;object-fit:cover;background:#2a2740;box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 0 8px rgba(255,255,255,.14),0 0 0 30px rgba(255,255,255,.045)}
 .mcsg-card--aurora .name{margin-top:96px;max-width:76%;color:#fff;font-size:44px;font-weight:800;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .mcsg-card--aurora .artist{margin-top:22px;max-width:64%;color:rgba(255,255,255,.62);font-size:26px;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.mcsg-card--aurora .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(4,5,10,.4);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+/* 贴边的 footer 禁用 backdrop-filter：它不受祖先圆角裁剪，预览底部两角会穿透成直角 */
+.mcsg-card--aurora .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(4,5,10,.4)}
 .mcsg-card--aurora .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border-radius:10px;padding:5px;box-sizing:border-box}
 .mcsg-card--aurora .brand-name{color:#fff;font-size:26px;font-weight:700;letter-spacing:2px}
 .mcsg-card--aurora .brand-tip{color:rgba(255,255,255,.62);font-size:20px;margin-top:4px}

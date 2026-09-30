@@ -13,7 +13,8 @@
 .mcsg-card--glass .times{display:flex;justify-content:space-between;margin-top:18px;color:rgba(255,255,255,.72);font-size:22px;font-variant-numeric:tabular-nums}
 .mcsg-card--glass .controls{position:absolute;left:0;right:0;top:802px;display:flex;align-items:center;justify-content:center;gap:92px}
 .mcsg-card--glass .controls svg{display:block;filter:drop-shadow(0 3px 8px rgba(0,0,0,.35))}
-.mcsg-card--glass .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(6,8,12,.34);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+/* 贴边的 footer 禁用 backdrop-filter：它不受祖先圆角裁剪，预览底部两角会穿透成直角 */
+.mcsg-card--glass .brand{position:absolute;left:0;right:0;bottom:0;height:104px;box-sizing:border-box;padding:0 52px;display:flex;align-items:center;justify-content:center;gap:22px;background:rgba(6,8,12,.34)}
 .mcsg-card--glass .brand-qr{width:66px;height:66px;flex:0 0 auto;background:#fff;border-radius:10px;padding:5px;box-sizing:border-box}
 .mcsg-card--glass .brand-name{color:#fff;font-size:26px;font-weight:700;letter-spacing:2px}
 .mcsg-card--glass .brand-tip{color:rgba(255,255,255,.66);font-size:20px;margin-top:4px}
