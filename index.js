@@ -316,6 +316,17 @@ const resolveSongData = async (ctx, hash) => {
   return null
 }
 
+// 合并两份歌曲渲染数据：overlay 的非空字段优先（右键行快照的封面/歌名比接口补齐的更可靠）
+const mergeSongLike = (base, overlay) => {
+  if (!overlay) return base || null
+  if (!base) return overlay
+  const merged = { ...base }
+  for (const [key, value] of Object.entries(overlay)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') merged[key] = value
+  }
+  return merged
+}
+
 // ── 卡片数据 ──
 
 /**
@@ -1074,7 +1085,12 @@ export default async function activate(ctx) {
         ctx.toast.warning('未发现可用卡片模板，请检查插件 template/ 目录')
         return false
       }
-      const songLike = await resolveSongData(ctx, shareContext.hash)
+      // 歌曲渲染数据：调用方自带（右键行快照 / store 反查对象）优先；
+      // 缺封面或时长时再按 hash 三层补齐，合并时自带字段优先（行内显示的封面最可靠）
+      let songLike = shareContext.songLike || null
+      if (!songLike?.coverUrl || !songLike?.duration) {
+        songLike = mergeSongLike(await resolveSongData(ctx, shareContext.hash), songLike)
+      }
       // 二维码单独用酷狗官方活动页链接（复制链接保持主程序原有分享页不变）：
       // album_audio_id 优先取歌曲数据，其次分享文本里自带的
       const qrUrl = buildSongQrUrl(shareContext.hash, pickAlbumAudioId(songLike) || shareContext.albumAudioId)
@@ -1083,6 +1099,31 @@ export default async function activate(ctx) {
     } finally {
       opening = false
     }
+  }
+
+  // ── 右键行快照（右键菜单分享入口专用）──
+  // 菜单项本身不带歌曲数据，在 contextmenu 捕获阶段记下被右键的行：
+  // 行上只有 data-song-id = song.id（多为纯数字 mixSongId），歌名/歌手/封面在行内 DOM 里。
+  // 行菜单「分享」同步解析成功就劫持（不复制只弹卡片）；解析不出则放行主程序复制，
+  // share-copied 事件兜底弹卡片时取走快照补封面/歌名。
+  let rowSnapshot = { id: '', title: '', artist: '', coverUrl: '', at: 0 }
+  const ROW_SNAPSHOT_TTL_MS = 60_000
+
+  const snapshotToSongLike = (snap) => {
+    const songLike = {}
+    if (snap.title) songLike.name = snap.title
+    if (snap.artist) songLike.artist = snap.artist
+    if (snap.coverUrl) songLike.coverUrl = normalizeCover(snap.coverUrl)
+    return songLike
+  }
+
+  // 一次性取走快照；两侧标题对不上时不附带，避免给别的歌错配封面
+  const takeRowSnapshotFor = (title) => {
+    const snap = rowSnapshot
+    rowSnapshot = { id: '', title: '', artist: '', coverUrl: '', at: 0 }
+    if (!snap.at || Date.now() - snap.at > ROW_SNAPSHOT_TTL_MS) return null
+    if (!title || !snap.title || snap.title !== title) return null
+    return snap
   }
 
   /**
@@ -1152,9 +1193,15 @@ export default async function activate(ctx) {
       const parsed = parseSongShareText(text)
       // 非歌曲分享（歌单/专辑/歌手/插件/一起听等）透传原始复制行为
       if (!parsed) return originalCopy(text)
+      // 右键放行的分享也会走到这里：带上行快照里的封面/歌名
+      const snap = takeRowSnapshotFor(parsed.title)
       // 预期主程序随后会弹「分享链接已复制」，先声明吞掉它
       shareToastGuard?.expect()
-      const opened = await requestOpen({ ...parsed, text })
+      const opened = await requestOpen({
+        ...parsed,
+        text,
+        songLike: snap ? snapshotToSongLike(snap) : undefined,
+      })
       if (!opened) {
         // 无可用模板时回退原始复制链接行为：既然真的复制了，提示就该正常出现
         shareToastGuard?.cancel()
@@ -1186,8 +1233,14 @@ export default async function activate(ctx) {
     const patchedWriteText = async (text) => {
       const parsed = parseSongShareText(text)
       if (!parsed) return originalWriteText(text)
+      // 右键放行的分享也会走到这里：带上行快照里的封面/歌名
+      const snap = takeRowSnapshotFor(parsed.title)
       shareToastGuard?.expect()
-      const opened = await requestOpen({ ...parsed, text })
+      const opened = await requestOpen({
+        ...parsed,
+        text,
+        songLike: snap ? snapshotToSongLike(snap) : undefined,
+      })
       if (!opened) {
         shareToastGuard?.cancel()
         return originalWriteText(text)
@@ -1221,11 +1274,14 @@ export default async function activate(ctx) {
       const hash = String(detail.target?.id || '').trim()
       if (detail.target?.type !== 'song' || !SONG_HASH_RE.test(hash)) return
       const parsed = parseSongShareText(String(detail.text || ''))
+      // 右键放行的分享会走到这里：hash 来自主程序真实歌曲对象，取走行快照补封面/歌名
+      const snap = takeRowSnapshotFor(String(detail.target?.title || '').trim())
       void requestOpen({
         hash,
         title: String(detail.target?.title || '').trim(),
         url: parsed?.url || buildSongShareUrl(hash),
         text: String(detail.text || ''),
+        songLike: snap ? snapshotToSongLike(snap) : undefined,
       })
     }
     window.addEventListener('echomusic:share-copied', handler)
@@ -1236,16 +1292,29 @@ export default async function activate(ctx) {
   // 在捕获阶段停止传播，主程序自身的分享逻辑（复制链接 + 「分享链接已复制」提示）完全不会执行，
   // 直接由插件打开卡片弹窗。目标歌曲解析不出来时放行，保持主程序原行为（不会误伤非歌曲分享）。
   const installShareTriggerHijack = () => {
-    // 最近一次右键命中的歌曲行：菜单项本身不带数据，靠它定位目标歌曲。
-    // 行上只有 song.id；歌名/歌手文本用于在本地数据与搜索接口里兜底反查。
-    let lastContextSong = { id: '', title: '', artist: '' }
+    // 右键时把被右键的行记入 activate 作用域的共享快照（行菜单「分享」与事件兜底都读它）：
+    // 行上只有 data-song-id = song.id；歌名/歌手/封面从行内 DOM 读
+    // （SongList 的行是 SongCard variant="list"，封面是行内唯一的 img）
+    const readRowCoverUrl = (row) => {
+      const src = row?.querySelector?.('img')?.getAttribute('src') || ''
+      if (src) return src
+      // 兜底：封面用内联背景图渲染的列表
+      const match = String(row?.querySelector?.('[style*="background-image"]')?.getAttribute('style') || '')
+        .match(/url\(\s*['"]?((?:https?:)?\/\/[^'")]+)/i)
+      return match ? match[1] : ''
+    }
 
     const rememberContextRow = (event) => {
       const row = event.target?.closest?.('[data-song-row]')
-      lastContextSong = {
+      rowSnapshot = {
         id: String(row?.getAttribute?.('data-song-id') || ''),
         title: String(row?.querySelector?.('.song-title')?.textContent || '').trim(),
-        artist: String(row?.querySelector?.('.song-artist')?.textContent || '').trim(),
+        artist: Array.from(row?.querySelectorAll?.('.song-artist') || [])
+          .map((el) => String(el.textContent || '').trim())
+          .filter(Boolean)
+          .join('/'),
+        coverUrl: readRowCoverUrl(row),
+        at: row ? Date.now() : 0,
       }
     }
 
@@ -1330,65 +1399,6 @@ export default async function activate(ctx) {
       })
     }
 
-    // 收集响应里所有含 32 位 hash 的候选对象：搜索接口的响应结构不稳定，
-    // 不猜字段名（lists/file_hash/SongName 等大小写与命名都变过），直接扫出来再按内容匹配
-    const collectSongLikeObjects = (value, depth = 0, out = []) => {
-      if (!value || depth > 6 || out.length > 300) return out
-      if (Array.isArray(value)) {
-        for (const item of value) collectSongLikeObjects(item, depth + 1, out)
-        return out
-      }
-      if (typeof value !== 'object') return out
-      out.push(value)
-      let keys = []
-      try {
-        keys = Object.keys(value)
-      } catch {
-        return out
-      }
-      for (const key of keys) {
-        const child = value[key]
-        if (child && typeof child === 'object') collectSongLikeObjects(child, depth + 1, out)
-      }
-      return out
-    }
-
-    const pickFrom = (item, keys) => {
-      for (const key of keys) {
-        const value = item?.[key]
-        if (typeof value === 'string' && value.trim()) return value.trim()
-      }
-      return ''
-    }
-
-    // 本地都找不到时，用歌名+歌手走主程序搜索接口反查 hash
-    const searchSongByText = async (title, artist) => {
-      const keywords = [title, artist].filter(Boolean).join(' ').trim()
-      if (!keywords) return null
-      try {
-        const payload = await ctx.kugou?.search?.search?.(keywords, 'song', 1, 10)
-        const targetTitle = String(title || '').trim().toLowerCase()
-        const targetArtist = String(artist || '').trim().toLowerCase()
-        const hit = collectSongLikeObjects(payload).find((item) => {
-          const hash = pickFrom(item, ['hash', 'hash_128', 'file_hash', 'FileHash', 'audio_hash'])
-          if (!SONG_HASH_RE.test(hash)) return false
-          const itemTitle = pickFrom(item, ['songname', 'SongName', 'audio_name', 'name']).toLowerCase()
-          if (itemTitle !== targetTitle) return false
-          if (!targetArtist) return true
-          const itemArtist = pickFrom(item, ['singername', 'SingerName', 'author_name', 'singer']).toLowerCase()
-          return itemArtist.includes(targetArtist) || targetArtist.includes(itemArtist)
-        })
-        if (!hit) return null
-        return {
-          hash: pickFrom(hit, ['hash', 'hash_128', 'file_hash', 'FileHash', 'audio_hash']),
-          title: pickFrom(hit, ['songname', 'SongName', 'audio_name', 'name']) || title,
-        }
-      } catch (error) {
-        console.warn('[music-card-share] 搜索反查歌曲失败', error)
-        return null
-      }
-    }
-
     // 识别分享触发元素：
     //   row-menu —— 歌曲列表右键菜单里的「分享」（目标来自被右键的那一行）
     //   page     —— 页面上的分享按钮：播放栏/歌词页/歌曲详情页（Button 组件把 tooltip 输出为
@@ -1443,31 +1453,47 @@ export default async function activate(ctx) {
       return { hash, title: String(track?.name || track?.title || '').trim() }
     }
 
-    // 右键行的歌曲：行上只有 song.id（且常是 mixSongId），按三级回退定位
-    //   ① id 在所有 store 里反查 → ② 行内歌名/歌手在本地数据里匹配 → ③ 走搜索接口反查
-    const resolveRowMenuSong = async () => {
-      const byId = findSongById(lastContextSong.id)
-      if (byId) return { hash: String(byId.hash), title: readSongTitle(byId) }
-
-      const byText = findSongByText(lastContextSong.title, lastContextSong.artist)
-      if (byText) {
-        return { hash: String(byText.hash), title: readSongTitle(byText) || lastContextSong.title }
+    // 右键行的歌曲：行上只有 song.id（多为纯数字 mixSongId，很多列表的数据还只在页面
+    // 组件里、不在任何 store），只做同步解析——
+    //   ① 行 id 本身是 hash → ② store 内按 song.id 反查 → ③ store 内按行内歌名/歌手匹配
+    // 同步解析不出就返回 null，由调用方放行主程序原行为（复制 + share-copied 事件兜底）。
+    // 不再做联网搜索反查：响应结构不稳、有概率失败，正是「没能识别这首歌」的根因；
+    // 而放行后的兜底链路里 hash 来自主程序真实歌曲对象，是百分百准确的
+    const resolveRowMenuSongSync = () => {
+      const id = String(rowSnapshot.id || '').trim()
+      if (SONG_HASH_RE.test(id)) {
+        return {
+          hash: id,
+          title: rowSnapshot.title,
+          songLike: snapshotToSongLike(rowSnapshot),
+        }
       }
-
-      const searched = await searchSongByText(lastContextSong.title, lastContextSong.artist)
-      if (searched) {
-        return searched
+      const byId = findSongById(id)
+      if (byId) {
+        return {
+          hash: String(byId.hash),
+          title: readSongTitle(byId) || rowSnapshot.title,
+          songLike: mergeSongLike(byId, snapshotToSongLike(rowSnapshot)),
+        }
+      }
+      const byText = findSongByText(rowSnapshot.title, rowSnapshot.artist)
+      if (byText) {
+        return {
+          hash: String(byText.hash),
+          title: readSongTitle(byText) || rowSnapshot.title,
+          songLike: mergeSongLike(byText, snapshotToSongLike(rowSnapshot)),
+        }
       }
       return null
     }
 
-    // 打开卡片弹窗（拼好分享文案）
-    const openCardFor = (song) => {
-      const url = buildSongShareUrl(song.hash)
-      const text = song.title
-        ? `EchoMusic 给你分享了歌曲「${song.title}」，快去看看吧\n${url}`
+    // 打开卡片弹窗（拼好分享文案；songLike 为行快照/store 反查到的渲染数据，可为空）
+    const openCardFor = (hash, title, songLike) => {
+      const url = buildSongShareUrl(hash)
+      const text = title
+        ? `EchoMusic 给你分享了歌曲「${title}」，快去看看吧\n${url}`
         : url
-      void requestOpen({ hash: song.hash, title: song.title, url, text })
+      void requestOpen({ hash, title, url, text, songLike })
     }
 
     const onClickCapture = (event) => {
@@ -1482,7 +1508,7 @@ export default async function activate(ctx) {
         if (!song) return
         event.preventDefault()
         event.stopPropagation()
-        openCardFor(song)
+        openCardFor(song.hash, song.title, null)
         return
       }
 
@@ -1493,28 +1519,20 @@ export default async function activate(ctx) {
         if (!song) return
         event.preventDefault()
         event.stopPropagation()
-        openCardFor(song)
+        openCardFor(song.hash, song.title, null)
         return
       }
 
-      // 歌曲列表右键菜单：确定是歌曲分享，但行上只有 song.id，需要异步反查 ——
-      // 先拦下（否则反查期间主程序已经把链接复制完了），再解析
+      // 歌曲列表右键菜单：确定是歌曲分享，但行上只有 song.id（很多列表的数据还只在
+      // 页面组件里）。同步解析得出歌曲才拦下（不复制、直接弹卡片）；
+      // 解析不出就完全放行主程序原行为：复制链接后派发 share-copied 事件，
+      // 事件兜底带着主程序真实歌曲 hash 补弹卡片（附带行快照补封面），
+      // 因此不会再出现「没能识别这首歌」的失败分支
+      const rowHit = resolveRowMenuSongSync()
+      if (!rowHit) return
       event.preventDefault()
       event.stopPropagation()
-      void (async () => {
-        try {
-          const song = await resolveRowMenuSong()
-          if (!song) {
-            // 已拦下主程序的复制，但没能识别歌曲：明确告知，而不是悄悄复制
-            ctx.toast.warning('没能识别这首歌，分享链接未复制')
-            return
-          }
-          openCardFor(song)
-        } catch (error) {
-          console.warn('[music-card-share] 分享解析失败', error)
-          ctx.toast.warning('分享失败，请稍后重试')
-        }
-      })()
+      openCardFor(rowHit.hash, rowHit.title, rowHit.songLike)
     }
 
     document.addEventListener('contextmenu', rememberContextRow, true)
