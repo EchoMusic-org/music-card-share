@@ -72,7 +72,8 @@ const buildQrSvg = (url) => {
     qr.make()
     return qr
       .createSvgTag({ cellSize: 4, margin: 0, scalable: true })
-      .replace('<svg', '<svg preserveAspectRatio="xMidYMid meet" style="display:block;width:100%;height:100%"')
+      // data-mcsg-qr 用于在预览 DOM 中定位二维码节点：导出回退截图路径需要临时换成短链二维码
+      .replace('<svg', '<svg data-mcsg-qr="1" preserveAspectRatio="xMidYMid meet" style="display:block;width:100%;height:100%"')
   } catch {
     return ''
   }
@@ -81,6 +82,13 @@ const buildQrSvg = (url) => {
 // ── 歌曲数据解析（纯插件无主程序扩展点，从队列/当前播放/酷狗接口三层补齐数据） ──
 
 const SONG_HASH_RE = /^[a-f0-9]{32}$/i
+
+// 短链服务：只在点击「复制图片」渲染导出时请求；预览始终用长链接本地生成二维码作为参考
+// 任一环节失败（网络错误/超时/响应 code 非 0/data 非合法 URL）都回退长链二维码
+const SHORT_LINK_API = 'https://echomusic-music-card-share.928233.xyz'
+const SHORT_LINK_TIMEOUT_MS = 3000
+// 同一首歌的短链缓存（仅缓存成功结果），避免重复导出时反复请求
+const shortLinkCache = new Map()
 
 // 复制链接/分享文案用主程序自有分享页（保持主程序原有行为）
 const buildSongShareUrl = (hash) =>
@@ -95,6 +103,47 @@ const buildSongQrUrl = (hash, albumAudioId) => {
     params.set('album_audio_id', audioId)
   }
   return `https://h5.kugou.com/v2/v-5a15aeb1/index.html?${params.toString()}`
+}
+
+/**
+ * 请求短链服务，换取导出图二维码用的短链。
+ * 成功响应 {"code":0,"data":"https://t1.kugou.com/xxx"}；失败响应如 {"code":400,"msg":"缺少参数"}。
+ * 网络错误/超时/非 JSON 响应/code 非 0/data 非合法 URL 一律返回 ''，由调用方回退长链二维码。
+ */
+const fetchShortLinkUrl = async (ctx, hash, albumAudioId) => {
+  if (!hash) return ''
+  const cacheKey = `${hash}|${albumAudioId || ''}`
+  const cached = shortLinkCache.get(cacheKey)
+  if (cached) return cached
+  const fetchImpl = ctx.net?.fetch || (typeof fetch === 'function' ? fetch.bind(window) : null)
+  if (!fetchImpl) return ''
+  // body 与服务端约定一致：hash 为字符串、album_audio_id 为数字；缺失时省略字段（服务端返回 400 则自然走回退）
+  const body = { hash: String(hash) }
+  const audioId = Number(albumAudioId)
+  if (Number.isFinite(audioId) && audioId > 0) body.album_audio_id = audioId
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SHORT_LINK_TIMEOUT_MS)
+  try {
+    const response = await fetchImpl(SHORT_LINK_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    const result = await response.json()
+    const url = result?.data
+    if (result?.code !== 0 || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      console.warn('[music-card-share] 短链服务返回失败：', result)
+      return ''
+    }
+    shortLinkCache.set(cacheKey, url)
+    return url
+  } catch (error) {
+    console.warn('[music-card-share] 短链服务请求失败，二维码回退长链：', error)
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // 从歌曲数据中提取酷狗 album_audio_id（混合曲目 ID）：
@@ -669,11 +718,27 @@ const rasterizeCardToPng = async (ctx, cardHtml, cardWidth, cardHeight) => {
 }
 
 /**
+ * 把预览 DOM 里标记了 data-mcsg-qr 的二维码 svg 原地替换为指定 svg（供回退截图路径用），
+ * 返回恢复函数；没有可替换节点（模板无码/替换内容为空）时返回 null。
+ */
+const swapQrSvg = (root, svgHtml) => {
+  const current = root?.querySelector?.('svg[data-mcsg-qr]')
+  if (!current || !svgHtml) return null
+  const holder = document.createElement('template')
+  holder.innerHTML = svgHtml.trim()
+  const next = holder.content.firstElementChild
+  if (!next) return null
+  current.replaceWith(next)
+  return () => next.replaceWith(current)
+}
+
+/**
  * 导出当前卡片到剪贴板，返回实际导出的像素尺寸。
  * 先尝试插件内高清栅格化（分辨率与窗口、屏幕无关）；
  * 失败或宿主不支持剪贴板写图时，回退到截取预览区已渲染的卡片（保真，但受屏幕分辨率限制）。
+ * qrSvgOverride 为短链版二维码 svg：高清路径随 cardHtml 生效；回退截图路径靠临时替换预览 DOM 生效。
  */
-const exportCardImage = async (ctx, cardRoot, cardHtml) => {
+const exportCardImage = async (ctx, cardRoot, cardHtml, qrSvgOverride) => {
   const card = cardRoot?.querySelector?.('.mcsg-card') || cardRoot
   if (!card) throw new Error('未找到可截图的卡片')
 
@@ -698,27 +763,33 @@ const exportCardImage = async (ctx, cardRoot, cardHtml) => {
   const capture = window.electron?.share?.captureRectToClipboard
   if (!capture) throw new Error('当前客户端不支持截图复制')
 
-  const before = card.getBoundingClientRect()
-  if (before.top < 0 || before.left < 0 || before.bottom > window.innerHeight || before.right > window.innerWidth) {
-    card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    await nextPaint()
-  }
+  // 预览 DOM 里的二维码仍是长链版本：导出用短链时先原地替换，截完（含中途抛错）恢复
+  const restoreQr = swapQrSvg(cardRoot, qrSvgOverride)
+  try {
+    const before = card.getBoundingClientRect()
+    if (before.top < 0 || before.left < 0 || before.bottom > window.innerHeight || before.right > window.innerWidth) {
+      card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      await nextPaint()
+    }
 
-  const rect = card.getBoundingClientRect()
-  const width = Math.ceil(rect.width)
-  const height = Math.ceil(rect.height)
-  if (width <= 0 || height <= 0) throw new Error('卡片尚未渲染完成，请稍后重试')
-  if (height > window.innerHeight || width > window.innerWidth) {
-    throw new Error('窗口太小，无法完整截取卡片，请放大窗口后重试')
+    const rect = card.getBoundingClientRect()
+    const width = Math.ceil(rect.width)
+    const height = Math.ceil(rect.height)
+    if (width <= 0 || height <= 0) throw new Error('卡片尚未渲染完成，请稍后重试')
+    if (height > window.innerHeight || width > window.innerWidth) {
+      throw new Error('窗口太小，无法完整截取卡片，请放大窗口后重试')
+    }
+    const ok = await capture({
+      x: Math.max(0, Math.floor(rect.left)),
+      y: Math.max(0, Math.floor(rect.top)),
+      width,
+      height,
+    })
+    if (!ok) throw new Error('复制分享图片失败')
+    return { width, height }
+  } finally {
+    restoreQr?.()
   }
-  const ok = await capture({
-    x: Math.max(0, Math.floor(rect.left)),
-    y: Math.max(0, Math.floor(rect.top)),
-    width,
-    height,
-  })
-  if (!ok) throw new Error('复制分享图片失败')
-  return { width, height }
 }
 
 // ── 分享弹窗 ──
@@ -793,7 +864,11 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
 
       const data = buildCardData(shareContext.songLike, shareContext.title, shareContext.qrUrl)
       const templateOf = (id) => templates.find((item) => item.id === id) || templates[0]
-      const cardHtmlOf = (id) => templateOf(id).html(data)
+      // qrSvgOverride：导出时传入短链版二维码；不传即预览用的长链版本（预览/缩略图始终不传）
+      const cardHtmlOf = (id, qrSvgOverride) =>
+        templateOf(id).html(qrSvgOverride ? { ...data, qrSvg: qrSvgOverride } : data)
+      // 导出时请求短链用的参数：与预览二维码同一首歌的 hash + album_audio_id
+      const albumAudioId = pickAlbumAudioId(shareContext.songLike) || shareContext.albumAudioId || ''
 
       // 读取卡片根元素实际尺寸（各模板尺寸可不同，酷狗同款为 720×1146）
       const measureCard = (root) => {
@@ -860,12 +935,20 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
         injectPreview()
       }
 
+      // 导出按钮两阶段文案：先取短链（最多等 SHORT_LINK_TIMEOUT_MS），再栅格化/截图
+      const phase = ref('')
+
       const exportImage = async () => {
         if (busy.value) return
         busy.value = true
         try {
-          // 传入当前模板的卡片 HTML：高清路径用它自行栅格化，失败时回退截预览区
-          const size = await exportCardImage(ctx, previewRef.value, cardHtmlOf(currentId.value))
+          // 点击渲染时才请求短链：成功则导出图二维码用短链，失败（含超时）保持预览的长链二维码
+          phase.value = '正在获取短链…'
+          const shortUrl = await fetchShortLinkUrl(ctx, shareContext.hash, albumAudioId)
+          const qrSvgOverride = shortUrl ? buildQrSvg(shortUrl) : ''
+          phase.value = '正在复制…'
+          // 传入当前模板的卡片 HTML（含短链二维码覆盖）：高清路径用它自行栅格化，失败时回退截预览区
+          const size = await exportCardImage(ctx, previewRef.value, cardHtmlOf(currentId.value, qrSvgOverride), qrSvgOverride)
           ctx.toast.success(size ? `分享图片已复制（${size.width}×${size.height}），去粘贴吧` : '分享图片已复制，去粘贴吧')
         } catch (error) {
           ctx.toast.warning(error instanceof Error ? error.message : '复制分享图片失败')
@@ -932,7 +1015,7 @@ const createShareDialog = (ctx, shareContext, closeDialog) => {
                       class: 'mcsg-ui-btn is-primary',
                       disabled: busy.value,
                       onClick: () => exportImage(),
-                    }, busy.value ? '正在复制…' : '复制图片'),
+                    }, busy.value ? (phase.value || '正在复制…') : '复制图片'),
                     h('button', {
                       class: 'mcsg-ui-btn',
                       disabled: busy.value,

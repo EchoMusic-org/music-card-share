@@ -1,7 +1,7 @@
 {
   "id": "music-card-share",
   "name": "歌曲卡片分享",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "优雅的歌曲卡片分享",
   "author": "xiaotian2333",
   "main": "index.js",
